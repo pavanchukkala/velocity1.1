@@ -614,7 +614,7 @@ export function tick(
       }
     }
 
-    // ── Bot escaper collision (attacker mode) ──────────────────────────────
+    // ── Bot escaper collision (attacker mode — offline) ────────────────────
     let levelWon = false;
     if (role === 'ATTACKER') {
       for (const bot of g.bots) {
@@ -653,7 +653,34 @@ export function tick(
       }
     }
 
-    // ── Remote escaper collision (online/local) ────────────────────────────
+    // ── Bot escaper teammate collision (ESCAPER in ONLINE/LOCAL) ──────────
+    // When the local player is an ESCAPER, bot teammate escapers must also
+    // collide with obstacles. The host client detects hits and reports them.
+    if (role === 'ESCAPER' && mode !== 'OFFLINE') {
+      g.remotePlayers.forEach(p => {
+        if (!p.isBot || p.role !== 'ESCAPER' || p.isDefeated || p.isHidden) return;
+        const hit = circleRectHit(p.x, p.y, PLAYER_RADIUS, obs);
+        if (hit) {
+          if (p.isShielded) {
+            // Shield absorbs
+            explosion(g, p.x, p.y, '#00f2ff', 18);
+            playSound('shield_ping');
+          } else {
+            // Bot eliminated — mark defeated and notify server
+            p.isDefeated = true;
+            explosion(g, p.x, p.y, '#ff0055', 30);
+            sparks(g, p.x, p.y, '#ff0055');
+            playSound('hit');
+            g.shake = 8;
+            floatText(g, p.x, p.y - 40, `${p.name} ELIMINATED`, '#ff0055', 14);
+            // Report to server so everyone knows this bot is down
+            cb.onPlayerEliminated?.(p.id);
+          }
+        }
+      });
+    }
+
+    // ── Remote real escaper collision (ATTACKER in online/local) ──────────
     if (role === 'ATTACKER' && (mode === 'ONLINE' || mode === 'LOCAL')) {
       g.remotePlayers.forEach(p => {
         if (p.role !== 'ESCAPER' || p.isDefeated || p.isHidden) return;
@@ -767,6 +794,52 @@ export function tick(
 
   // ── Glitch decay ───────────────────────────────────────────────────────────
   if (g.glitchTimer > 0) g.glitchTimer--;
+
+  // ── Escaper-to-escaper physical collision (ONLINE/LOCAL) ──────────────────
+  // Real physics: escapers bump off each other — no passing through!
+  if (role === 'ESCAPER' && mode !== 'OFFLINE' && !g.isSpectating) {
+    const ESCAPER_PUSH_DIST = PLAYER_RADIUS * 2.2; // collision threshold
+    const ESCAPER_BUMP = 2.5; // bump force
+    g.remotePlayers.forEach(p => {
+      if (p.role !== 'ESCAPER' || p.isDefeated || p.id === undefined) return;
+      const dx = g.playerX - p.x;
+      const dy = g.playerY - p.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < ESCAPER_PUSH_DIST && dist > 0) {
+        // Push apart — equal and opposite impulse
+        const overlap = ESCAPER_PUSH_DIST - dist;
+        const nx = dx / dist; // normalized direction
+        const ny = dy / dist;
+        const pushForce = (overlap / ESCAPER_PUSH_DIST) * ESCAPER_BUMP;
+        g.playerX += nx * pushForce;
+        g.playerY += ny * pushForce * 0.5; // less vertical push
+        g.playerVx += nx * pushForce * 0.4;
+        // Clamp to screen
+        g.playerX = Math.max(PLAYER_RADIUS, Math.min(canvasW - PLAYER_RADIUS, g.playerX));
+        g.playerY = Math.max(200, Math.min(canvasH - PLAYER_RADIUS, g.playerY));
+        // Visual feedback
+        if (overlap > 5) {
+          g.shake = Math.max(g.shake, 3);
+          sparks(g, (g.playerX + p.x) / 2, (g.playerY + p.y) / 2, '#00f2ff');
+        }
+      }
+    });
+    // Bot-to-bot and bot-to-local-player collision (bots also bump)
+    g.remotePlayers.forEach(p1 => {
+      if (!p1.isBot || p1.role !== 'ESCAPER' || p1.isDefeated) return;
+      // Bot vs local player
+      const dx = p1.x - g.playerX;
+      const dy = p1.y - g.playerY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < ESCAPER_PUSH_DIST && dist > 0) {
+        const overlap = ESCAPER_PUSH_DIST - dist;
+        const nx = dx / dist;
+        const pushForce = (overlap / ESCAPER_PUSH_DIST) * ESCAPER_BUMP * 0.5;
+        p1.x += nx * pushForce;
+        p1.x = Math.max(PLAYER_RADIUS, Math.min(canvasW - PLAYER_RADIUS, p1.x));
+      }
+    });
+  }
 
   // ── Combo timeout ─────────────────────────────────────────────────────────
   if (g.comboTimer > 0) {
@@ -992,6 +1065,11 @@ function updateBot(
     return;
   }
   if (role === 'ATTACKER') {
+    updateBotEscaperAI(bot, g, canvasW);
+  }
+  // In ONLINE/LOCAL escaper mode, the bots array holds local teammate bots
+  // They also need AI movement so they dodge obstacles like real players
+  if (role === 'ESCAPER') {
     updateBotEscaperAI(bot, g, canvasW);
   }
 }

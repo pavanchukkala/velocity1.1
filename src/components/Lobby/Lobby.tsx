@@ -291,7 +291,7 @@ export function Lobby({
                 Battle Format
               </p>
               <div className="flex justify-center gap-2 mb-1">
-                {([2,3,4] as const).map(n => (
+                {([1,2,3,4] as const).map(n => (
                   <button
                     key={n}
                     onClick={() => set({ teamSize: n })}
@@ -307,10 +307,10 @@ export function Lobby({
                 ))}
               </div>
               <div className="flex justify-center gap-4 text-[9px] text-white/30 uppercase tracking-widest">
-                <span className="flex items-center gap-1"><span className="text-[#00ff88]">●</span> 2+ Escapers alive = WIN</span>
+                <span className="flex items-center gap-1"><span className="text-[#00ff88]">●</span> {teamSize === 1 ? '1 Escaper survives = WIN' : '1+ Escapers alive = WIN'}</span>
                 <span className="flex items-center gap-1"><span className="text-[#ff0055]">●</span> All eliminated = Attackers WIN</span>
               </div>
-              <p className="text-[9px] text-white/20 text-center">AI bots fill empty slots. 90 second match.</p>
+              <p className="text-[9px] text-white/20 text-center">{teamSize === 1 ? 'Pure 1v1 duel.' : 'AI bots fill empty slots.'} 90 second match.</p>
             </motion.div>
           )}
 
@@ -328,7 +328,7 @@ export function Lobby({
                 <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-3 flex flex-col gap-2">
                   <p className="text-[9px] uppercase tracking-widest text-white/40 text-center">Battle Format</p>
                   <div className="flex justify-center gap-2">
-                    {([2,3,4] as const).map(n => (
+                    {([1,2,3,4] as const).map(n => (
                       <button
                         key={n}
                         onClick={() => set({ teamSize: n })}

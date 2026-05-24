@@ -343,6 +343,15 @@ export function GameCanvas({
             });
           }
         },
+        onPlayerEliminated: (playerId) => {
+          // Bot teammate was hit — report to server
+          if (mode !== 'OFFLINE') {
+            socketRef.current?.emit('game-over-report', {
+              roomId: roomIdRef.current,
+              escaperId: playerId,
+            });
+          }
+        },
         onRecallUsed: (recallTargetId) => {
           socketRef.current?.emit('recall-teammate', {
             roomId: roomIdRef.current, recallTargetId,
