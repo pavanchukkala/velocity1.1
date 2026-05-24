@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { nanoid } from 'nanoid';
+
 import { Lobby } from '../Lobby/Lobby';
 import { GameCanvas } from './GameCanvas';
 import { GameOver } from '../UI/GameOver';
@@ -104,7 +104,7 @@ export function NeonVelocity() {
     });
 
     socket.on('game-end', ({ result, scores }: { result: WinResult; scores: Record<string, number> }) => {
-      const myScore = scores[socket.id] ?? score;
+      const myScore = scores[socket.id ?? ''] ?? score;
       setScore(myScore);
       setWinResult(result);
       setPhase('GAMEOVER');
@@ -355,7 +355,6 @@ function MatchmakingScreen({ role, onCancel }: { role: Role; onCancel: () => voi
             className="w-3 h-3 rounded-full"
             style={{
               background: i < 4 ? '#00ff88' : '#ff0055',
-              opacity: 0.3 + Math.sin(Date.now() / 300 + i) * 0.3,
               animation: `pulse 0.8s ease-in-out ${i * 0.1}s infinite`,
             }}
           />

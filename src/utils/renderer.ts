@@ -6,8 +6,19 @@ import {
 } from '../constants';
 import type { Obstacle, PowerUp, BotState, RemotePlayer, AttackerReticle, TrailPoint, SpeedLine, Particle, FloatingText } from '../types';
 
+// Color cache to avoid re-parsing hex on every frame (W2 optimization)
+const _colorCache = new Map<string, string>();
+const _COLOR_CACHE_MAX = 128;
+
 function withAlpha(color: string, alpha: number): string {
   const a = Math.max(0, Math.min(1, alpha));
+  // Round alpha to 2 decimal places for better cache hit rate
+  const aRound = Math.round(a * 100) / 100;
+  const key = color + ':' + aRound;
+  const cached = _colorCache.get(key);
+  if (cached) return cached;
+
+  let result: string;
 
   if (color.startsWith('#')) {
     const hex = color.slice(1);
@@ -15,25 +26,30 @@ function withAlpha(color: string, alpha: number): string {
       const r = parseInt(hex[0] + hex[0], 16);
       const g = parseInt(hex[1] + hex[1], 16);
       const b = parseInt(hex[2] + hex[2], 16);
-      return `rgba(${r}, ${g}, ${b}, ${a})`;
-    }
-    if (hex.length === 6 || hex.length === 8) {
+      result = `rgba(${r}, ${g}, ${b}, ${aRound})`;
+    } else if (hex.length === 6 || hex.length === 8) {
       const r = parseInt(hex.slice(0, 2), 16);
       const g = parseInt(hex.slice(2, 4), 16);
       const b = parseInt(hex.slice(4, 6), 16);
-      return `rgba(${r}, ${g}, ${b}, ${a})`;
+      result = `rgba(${r}, ${g}, ${b}, ${aRound})`;
+    } else {
+      result = color;
     }
+  } else if (color.startsWith('rgb(')) {
+    result = color.replace(/^rgb\((.+)\)$/, `rgba($1, ${aRound})`);
+  } else if (color.startsWith('hsl(')) {
+    result = color.replace(/^hsl\((.+)\)$/, `hsla($1, ${aRound})`);
+  } else {
+    result = color;
   }
 
-  if (color.startsWith('rgb(')) {
-    return color.replace(/^rgb\((.+)\)$/, `rgba($1, ${a})`);
+  // Evict oldest entries if cache is full
+  if (_colorCache.size >= _COLOR_CACHE_MAX) {
+    const firstKey = _colorCache.keys().next().value;
+    if (firstKey) _colorCache.delete(firstKey);
   }
-
-  if (color.startsWith('hsl(')) {
-    return color.replace(/^hsl\((.+)\)$/, `hsla($1, ${a})`);
-  }
-
-  return color;
+  _colorCache.set(key, result);
+  return result;
 }
 
 // ── Canvas clear ──────────────────────────────────────────────────────────────

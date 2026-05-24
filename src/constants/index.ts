@@ -59,8 +59,8 @@ export const SCORE_NEAR_MISS           = 25;
 export const SCORE_OBSTACLE_CLEARED    = 40;
 export const SCORE_POWERUP_COIN        = 500;
 export const SCORE_ATTACKER_HIT_BOT    = 600;
-export const SCORE_ATTACKER_HIT_REAL   = 1200;
-export const SCORE_LEVEL_UP_BONUS      = 200;
+export const SCORE_ATTACKER_HIT_REAL   = 1200; // @planned — use for online attacker scoring
+export const SCORE_LEVEL_UP_BONUS      = 200;  // @planned — use in leveling logic
 export const COMBO_TIMEOUT_FRAMES      = 120;
 
 // ─── Power-Ups ────────────────────────────────────────────────────────────────
@@ -127,5 +127,5 @@ export const OBSTACLE_GRAVITY_BASE   = 1.0;     // multiplier
 export const OBSTACLE_GRAVITY_VARIANCE = 0.4;   // ± variance
 
 // ─── Screen Edge Danger ───────────────────────────────────────────────────────
-export const SCREEN_EDGE_DANGER_ZONE = 50;      // px from edge
-export const SCREEN_EDGE_PUSH_FORCE  = 0.15;    // force pushing away from edge
+export const SCREEN_EDGE_DANGER_ZONE = 50;      // px from edge // @planned — edge danger mechanic
+export const SCREEN_EDGE_PUSH_FORCE  = 0.15;    // force pushing away from edge // @planned — edge danger mechanic

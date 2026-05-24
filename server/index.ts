@@ -70,6 +70,7 @@ const attackerQueue: QueueEntry[] = [];
 // ── Room store ────────────────────────────────────────────────────────────────
 
 const rooms = new Map<string, ServerRoom>();
+const playerEnergy = new Map<string, number>();
 
 // ── Player→room index ─────────────────────────────────────────────────────────
 
@@ -94,13 +95,9 @@ function getActiveEscapers(room: ServerRoom): ServerPlayer[] {
   return getRoomPlayers(room).filter(p => p.role === 'ESCAPER' && !p.isDefeated && !p.isSpectating);
 }
 
-// Kept for reference only (not used for win condition)
-function getLiveEscapers(room: ServerRoom): ServerPlayer[] {
-  return getRoomPlayers(room).filter(p => p.role === 'ESCAPER' && !p.isDefeated);
-}
-
-function getSurvivingEscapers(room: ServerRoom): ServerPlayer[] {
-  return getActiveEscapers(room);
+function getHostId(room: ServerRoom): string | null {
+  const realPlayers = [...room.players.values()].filter(p => !p.isBot).sort((a, b) => a.id.localeCompare(b.id));
+  return realPlayers[0]?.id ?? null;
 }
 
 function endRoom(io: Server, room: ServerRoom, result: WinResult) {
@@ -454,12 +451,20 @@ async function main() {
           room.remainingSeconds--;
           io.to(room.id).emit('timer-tick', { seconds: room.remainingSeconds });
 
+          // Regen attacker energy server-side
+          for (const [pid, pl] of room.players) {
+            if (pl.role === 'ATTACKER' && !pl.isBot) {
+              const cur = playerEnergy.get(pid) ?? 20;
+              playerEnergy.set(pid, Math.min(100, cur + 0.12 * 60)); // ~7.2 per tick (1s)
+            }
+          }
+
           if (room.remainingSeconds <= 0) {
             clearInterval(room.gameTimer!);
-            // ESCAPERS WIN only if more than one is actively playing when timer ends
+            // ESCAPERS WIN if at least one is actively playing when timer ends
             // Spectating players are NOT counted — they are eliminated, just watching
             const active = getActiveEscapers(room);
-            endRoom(io, room, active.length > 1 ? 'ESCAPERS_WIN' : 'ATTACKERS_WIN');
+            endRoom(io, room, active.length >= 1 ? 'ESCAPERS_WIN' : 'ATTACKERS_WIN');
           }
         }, 1000);
       }
@@ -479,6 +484,7 @@ async function main() {
       if (!roomId) return;
       const room = rooms.get(roomId);
       if (!room || room.gamePhase !== 'PLAYING') return;
+      if (playerRoom.get(socket.id) !== roomId) return; // Not in this room
       const p = room.players.get(socket.id);
       if (!p) return;
 
@@ -512,6 +518,9 @@ async function main() {
       if (!roomId) return;
       const room = rooms.get(roomId);
       if (!room || room.gamePhase !== 'PLAYING') return;
+      // Only the host client can control bots
+      const hostIdBotMove = getHostId(room);
+      if (socket.id !== hostIdBotMove) return;
 
       const bot = room.players.get(data.botId);
       if (!bot || !bot.isBot) return;
@@ -537,8 +546,13 @@ async function main() {
       if (!roomId) return;
       const room = rooms.get(roomId);
       if (!room || room.gamePhase !== 'PLAYING') return;
+      if (playerRoom.get(socket.id) !== roomId) return; // Not in this room
       const p = room.players.get(socket.id);
       if (!p || p.role !== 'ATTACKER') return;
+      // Server-side energy check
+      const dropEnergy = playerEnergy.get(socket.id) ?? 20;
+      if (dropEnergy < 5) return; // Not enough energy
+      playerEnergy.set(socket.id, dropEnergy - 5);
 
       const x = typeof data?.x === 'number' && isFinite(data.x)
         ? Math.max(20, Math.min(data.x, 1200)) : 400;
@@ -566,6 +580,9 @@ async function main() {
       if (!roomId) return;
       const room = rooms.get(roomId);
       if (!room || room.gamePhase !== 'PLAYING') return;
+      // Only the host client can control bots
+      const hostIdBotDrop = getHostId(room);
+      if (socket.id !== hostIdBotDrop) return;
       
       const bot = room.players.get(data.botId);
       if (!bot || !bot.isBot || bot.role !== 'ATTACKER') return;
@@ -597,8 +614,15 @@ async function main() {
       if (!ability) return;
       const room = rooms.get(roomId);
       if (!room || room.gamePhase !== 'PLAYING') return;
+      if (playerRoom.get(socket.id) !== roomId) return; // Not in this room
       const p = room.players.get(socket.id);
       if (!p || p.role !== 'ATTACKER') return;
+      // Server-side energy check for abilities
+      const ABILITY_ENERGY_COST: Record<string, number> = { SWARM: 22, EMP: 40, FIREWALL: 65 };
+      const abilityCost = ABILITY_ENERGY_COST[ability] ?? 100;
+      const abilityEnergy = playerEnergy.get(socket.id) ?? 20;
+      if (abilityEnergy < abilityCost) return;
+      playerEnergy.set(socket.id, abilityEnergy - abilityCost);
 
       io.to(roomId).emit('ability-used', { ability, fromId: socket.id });
     });
@@ -610,6 +634,7 @@ async function main() {
       if (!roomId) return;
       const room = rooms.get(roomId);
       if (!room || room.gamePhase !== 'PLAYING') return;
+      if (playerRoom.get(socket.id) !== roomId) return; // Not in this room
 
       const escaperId = typeof data?.escaperId === 'string' ? data.escaperId : null;
       if (!escaperId) return;
@@ -639,6 +664,7 @@ async function main() {
       if (!roomId) return;
       const room = rooms.get(roomId);
       if (!room || room.gamePhase !== 'PLAYING') return;
+      if (playerRoom.get(socket.id) !== roomId) return; // Not in this room
 
       const recallTargetId = typeof data?.recallTargetId === 'string' ? data.recallTargetId : null;
       if (!recallTargetId) return;
@@ -675,11 +701,14 @@ async function main() {
       if (!checkRateLimit(socket.id, 'voice-signal', 30)) return;
       const roomId = validateRoomId(data?.roomId);
       if (!roomId) return;
-      // Validate 'to' is in the same room
       const room = rooms.get(roomId);
       if (!room) return;
+      if (playerRoom.get(socket.id) !== roomId) return; // Not in this room
       const to = typeof data?.to === 'string' ? data.to : null;
       if (!to || !room.players.has(to)) return;
+      // Cap signal payload size to prevent DoS
+      const signalStr = JSON.stringify(data.signal ?? null);
+      if (signalStr.length > 8192) return;
       io.to(to).emit('voice-signal', { from: socket.id, signal: data.signal });
     });
 
@@ -688,7 +717,9 @@ async function main() {
       const roomId = validateRoomId(data?.roomId);
       if (!roomId) return;
       const room = rooms.get(roomId);
-      const p = room?.players.get(socket.id);
+      if (!room) return;
+      if (playerRoom.get(socket.id) !== roomId) return; // Not in this room
+      const p = room.players.get(socket.id);
       if (p) {
         p.isMuted = data?.isMuted === true;
         p.isSpeaking = data?.isSpeaking === true;
@@ -697,7 +728,10 @@ async function main() {
     });
 
     // ── Leave room ──────────────────────────────────────────────────────────
-    socket.on('leave-room', ({ roomId }: { roomId: string }) => {
+    socket.on('leave-room', (data: { roomId: string }) => {
+      if (!checkRateLimit(socket.id, 'leave-room', 3)) return;
+      const roomId = validateRoomId(data?.roomId);
+      if (!roomId) return;
       handleLeave(io, socket, roomId);
     });
 
@@ -713,8 +747,9 @@ async function main() {
       const ai = attackerQueue.findIndex(e => e.socketId === socket.id);
       if (ai !== -1) attackerQueue.splice(ai, 1);
 
-      // Cleanup rate limit entries
+      // Cleanup rate limit entries and energy
       cleanupRateLimits(socket.id);
+      playerEnergy.delete(socket.id);
     });
   });
 
@@ -751,7 +786,7 @@ function handleLeave(io: Server, socket: Socket, roomId: string) {
   socket.leave(roomId);
 
   if (room.players.size === 0) {
-    clearInterval(room.gameTimer!);
+    if (room.gameTimer) clearInterval(room.gameTimer);
     rooms.delete(roomId);
   } else {
     broadcastRoomUpdate(io, room);

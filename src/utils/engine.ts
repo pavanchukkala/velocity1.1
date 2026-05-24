@@ -308,8 +308,7 @@ export function tick(
 ) {
   if (g.isGameOver) return;
 
-  // Wrap at 1M to prevent float precision issues in long sessions
-  g.frameCount = (g.frameCount + 1) % 1_000_000;
+  g.frameCount++;
 
   // ── Player movement ────────────────────────────────────────────────────────
   if (role === 'ESCAPER') {
@@ -427,7 +426,7 @@ export function tick(
   }
 
   // ── World speed ramp ───────────────────────────────────────────────────────
-  g.worldSpeed = Math.min(28, g.worldSpeed + SPEED_RAMP);
+  g.worldSpeed = Math.min(22, g.worldSpeed + SPEED_RAMP);
 
   // ── Leveling ───────────────────────────────────────────────────────────────
   const newLevel = Math.floor(g.score / SCORE_PER_LEVEL) + 1;
@@ -449,7 +448,11 @@ export function tick(
       ? BOSS_SPAWN_INTERVAL
       : Math.max(MIN_SPAWN_INTERVAL, BASE_SPAWN_INTERVAL - g.level * 3);
 
-    if (g.frameCount - g.lastSpawnFrame >= spawnInterval) {
+    // Cap max active obstacles to prevent impossible scenarios
+    const MAX_OBSTACLES = 35;
+    if (g.obstacles.length >= MAX_OBSTACLES) {
+      // Skip spawning when screen is saturated
+    } else if (g.frameCount - g.lastSpawnFrame >= spawnInterval) {
       if (isBoss && g.frameCount % 90 === 0) {
         g.obstacles.push(spawnBossObstacle(canvasW));
       } else {
@@ -577,12 +580,13 @@ export function tick(
       }
       // Near-miss detection
       if (!obs.nearMissTriggered) {
-        const nearDist = NEAR_MISS_THRESHOLD + (obs.width + obs.height) / 4;
-        const dist = Math.sqrt(
-          Math.pow(g.playerX - (obs.x + obs.width / 2), 2) +
-          Math.pow(g.playerY - (obs.y + obs.height / 2), 2)
-        );
-        if (dist < nearDist) {
+        // Use edge-to-circle distance (same as collision but with expanded radius)
+        const nearX = Math.max(obs.x, Math.min(g.playerX, obs.x + obs.width));
+        const nearY = Math.max(obs.y, Math.min(g.playerY, obs.y + obs.height));
+        const edgeDx = g.playerX - nearX;
+        const edgeDy = g.playerY - nearY;
+        const edgeDist = Math.sqrt(edgeDx * edgeDx + edgeDy * edgeDy);
+        if (edgeDist < NEAR_MISS_THRESHOLD + PLAYER_RADIUS && edgeDist > PLAYER_RADIUS) {
           obs.nearMissTriggered = true;
           g.combo++;
           g.comboTimer = COMBO_TIMEOUT_FRAMES;
@@ -613,8 +617,8 @@ export function tick(
     // ── Bot escaper collision (attacker mode) ──────────────────────────────
     let levelWon = false;
     if (role === 'ATTACKER') {
-      g.bots.forEach(bot => {
-        if (bot.isDefeated || levelWon) return;
+      for (const bot of g.bots) {
+        if (bot.isDefeated || levelWon) break;
         const hit = circleRectHit(bot.x, bot.y, PLAYER_RADIUS, obs);
         if (hit) {
           bot.isDefeated = true;
@@ -640,7 +644,7 @@ export function tick(
 
           levelWon = true;
         }
-      });
+      }
       // CRITICAL FIX: If we won the level, clear remaining obstacles and immediately BREAK the outer loop
       // so it does not attempt to read the next obstacle in an empty array (which causes Cannot read .y of undefined)
       if (levelWon) {
@@ -793,15 +797,8 @@ export function tick(
     }
   }
 
-  // ── PERFORMANCE CLEANUP: Remove off-screen / dead entities ─────────────────
-  // This prevents arrays from growing forever and causing lag at high scores
-  g.obstacles = g.obstacles.filter(o => o.y < canvasH + 100);
-  g.powerUps = g.powerUps.filter(p => p.y < canvasH + 100);
-  g.particles = g.particles.filter(p => p.life > 0);
-  g.trails = g.trails.filter(t => t.life > 0);
-  g.speedLines = g.speedLines.filter(s => s.y < canvasH + 100);
-  g.floatingTexts = g.floatingTexts.filter(t => t.life > 0);
-  g.spawns = g.spawns.filter(s => s.life > 0);
+  // Cleanup is handled by splice() in the individual update loops above.
+  // No redundant .filter() needed — avoids O(n) array allocations per frame.
 }
 
 // ── Escaper movement ──────────────────────────────────────────────────────────
@@ -1267,6 +1264,22 @@ function triggerGameOver(g: GameState, result: WinResult, cb: TickCallbacks) {
 }
 
 function circleRectHit(cx: number, cy: number, r: number, rect: Obstacle): boolean {
+  // Transform circle center into the obstacle's local (rotated) coordinate space
+  if (rect.rotation) {
+    const ocx = rect.x + rect.width / 2;
+    const ocy = rect.y + rect.height / 2;
+    const cos = Math.cos(-rect.rotation);
+    const sin = Math.sin(-rect.rotation);
+    const dx = cx - ocx;
+    const dy = cy - ocy;
+    const localX = ocx + dx * cos - dy * sin;
+    const localY = ocy + dx * sin + dy * cos;
+    const nearX = Math.max(rect.x, Math.min(localX, rect.x + rect.width));
+    const nearY = Math.max(rect.y, Math.min(localY, rect.y + rect.height));
+    const ndx = localX - nearX;
+    const ndy = localY - nearY;
+    return ndx * ndx + ndy * ndy < r * r;
+  }
   const nearX = Math.max(rect.x, Math.min(cx, rect.x + rect.width));
   const nearY = Math.max(rect.y, Math.min(cy, rect.y + rect.height));
   const dx = cx - nearX;

@@ -95,13 +95,26 @@ export function checkRateLimit(
   const now = Date.now();
   let entry = rateLimitStore.get(key);
 
-  if (!entry || now - entry.windowStart > 1000) {
+  if (!entry) {
     entry = { count: 1, windowStart: now };
     rateLimitStore.set(key, entry);
     return true;
   }
 
-  entry.count++;
+  // Sliding window: decay count based on elapsed time
+  const elapsed = now - entry.windowStart;
+  if (elapsed >= 1000) {
+    entry.count = 1;
+    entry.windowStart = now;
+    return true;
+  }
+
+  // Proportional decay for sliding effect
+  const decayFactor = elapsed / 1000;
+  const effectiveCount = entry.count * (1 - decayFactor);
+  entry.count = effectiveCount + 1;
+  entry.windowStart = now - (elapsed * (1 - decayFactor));
+
   return entry.count <= maxPerSecond;
 }
 

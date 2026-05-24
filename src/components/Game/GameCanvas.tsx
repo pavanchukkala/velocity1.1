@@ -16,6 +16,7 @@ import {
 } from '../../utils/renderer';
 import { HUD } from '../HUD/HUD';
 import { startAmbient } from '../../utils/audio';
+import { PLAYER_RADIUS } from '../../constants';
 
 interface Props {
   dimensions: { width: number; height: number };
@@ -87,8 +88,15 @@ export function GameCanvas({
   // Sync canvas size when dimensions change — update game state but do NOT restart loop
   useEffect(() => {
     const g = gRef.current;
-    g.playerY = dimensions.height - 80;
-    g.bots.forEach(b => { b.y = dimensions.height - 80; });
+    const oldH = g.playerY > 0 ? (g.playerY + 80) : dimensions.height; // approximate old height
+    const scaleX = dimensions.width / (dimRef.current.width || dimensions.width);
+    const scaleY = dimensions.height / (dimRef.current.height || dimensions.height);
+    g.playerX = Math.max(PLAYER_RADIUS, Math.min(dimensions.width - PLAYER_RADIUS, g.playerX * scaleX));
+    g.playerY = Math.max(200, Math.min(dimensions.height - PLAYER_RADIUS, g.playerY * scaleY));
+    g.bots.forEach(b => {
+      b.x = Math.max(PLAYER_RADIUS, Math.min(dimensions.width - PLAYER_RADIUS, b.x * scaleX));
+      b.y = Math.max(200, Math.min(dimensions.height - PLAYER_RADIUS, b.y * scaleY));
+    });
     const canvas = canvasRef.current;
     if (canvas) {
       canvas.width  = dimensions.width;
@@ -107,6 +115,20 @@ export function GameCanvas({
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+  }, []);
+
+  // Pause game when tab is hidden to prevent physics accumulation
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        // Pause: clear all keys to stop movement
+        gRef.current.keys = {};
+        gRef.current.touchX = null;
+        gRef.current.touchY = null;
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
   }, []);
 
   // Touch / mouse — registered once (role never changes mid-game)
@@ -266,11 +288,24 @@ export function GameCanvas({
 
     let rafId: number;
 
+    const FIXED_DT = 1000 / 60; // 16.67ms per tick — locked to 60fps logic
+    let accumulator = 0;
+    let lastTime = 0;
+
     const loop = (timestamp: number) => {
+      if (lastTime === 0) lastTime = timestamp;
+      const elapsed = Math.min(timestamp - lastTime, 100); // cap to prevent spiral of death
+      lastTime = timestamp;
+      accumulator += elapsed;
+
       const g  = gRef.current;
       const w  = dimRef.current.width;
       const h  = dimRef.current.height;
       const pt = g.powerUpTimers;
+
+      // Run physics at fixed 60fps regardless of display refresh rate
+      while (accumulator >= FIXED_DT) {
+        accumulator -= FIXED_DT;
 
       // Logic
       tick(g, w, h, role, mode, {
@@ -340,6 +375,8 @@ export function GameCanvas({
         ra.life--;
         if (ra.life <= 0 || ra.y > h + 60) recallAssetsRef.current.splice(i, 1);
       }
+
+      } // end fixed timestep while loop
 
       // Sync HUD power-up state
       hudRef.current.shieldActive   = pt.shield    > 0;
