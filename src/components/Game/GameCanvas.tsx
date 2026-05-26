@@ -449,26 +449,29 @@ export function GameCanvas({
       drawFloatingTexts(ctx, g.floatingTexts);
       drawGlitch(ctx, canvas, g.glitchTimer, w, h);
 
-      // Spectate overlay — dim the screen and show status
+      // Spectate indicator — subtle top bar, NO screen dimming
+      // Player can fully watch teammates play
       if (isSpectatingRef.current) {
-        ctx.fillStyle = 'rgba(0,0,0,0.55)';
-        ctx.fillRect(0, 0, w, h);
-        ctx.fillStyle = '#ff0055';
-        ctx.shadowBlur = 20;
-        ctx.shadowColor = '#ff0055';
-        ctx.font = 'bold 22px "JetBrains Mono"';
+        // Top status bar
+        const barH = 36;
+        ctx.fillStyle = 'rgba(255,0,85,0.85)';
+        ctx.fillRect(0, 0, w, barH);
+        // Gradient fade at bottom edge
+        const grad = ctx.createLinearGradient(0, barH - 6, 0, barH + 8);
+        grad.addColorStop(0, 'rgba(255,0,85,0.3)');
+        grad.addColorStop(1, 'rgba(255,0,85,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, barH - 6, w, 14);
+        // Text
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 13px "JetBrains Mono"';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('👁 SPECTATING', w / 2, h / 2 - 24);
-        ctx.fillStyle = '#00ff88';
-        ctx.shadowColor = '#00ff88';
-        ctx.font = 'bold 13px "JetBrains Mono"';
         const hasRecall = recallAssetsRef.current.some(r => r.recallTargetId === socketRef.current?.id);
         ctx.fillText(
-          hasRecall ? '📡 Recall asset is live — teammate can save you!' : 'Waiting for recall…',
-          w / 2, h / 2 + 16
+          hasRecall ? '📡 ELIMINATED — Recall token is live! Teammate can save you!' : '💀 ELIMINATED — Watching teammates… waiting for recall',
+          w / 2, barH / 2
         );
-        ctx.shadowBlur = 0;
       }
 
       ctx.restore();

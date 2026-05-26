@@ -408,9 +408,7 @@ async function main() {
         isDefeated: false, isSpectating: false, isShielded: false, isFiring: false, isHidden: false,
       };
 
-      // Replace one bot of the same role to keep team size constant
-      const botOfRole = [...foundRoom.players.entries()].find(([, pl]) => pl.isBot && pl.role === role);
-      if (botOfRole) foundRoom.players.delete(botOfRole[0]);
+      // LOCAL mode has no bots — just add the real player directly
 
       foundRoom.players.set(socket.id, p);
       foundRoom.scores.set(socket.id, 0);
