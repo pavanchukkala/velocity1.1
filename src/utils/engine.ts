@@ -796,46 +796,46 @@ export function tick(
   if (g.glitchTimer > 0) g.glitchTimer--;
 
   // ── Escaper-to-escaper physical collision (ONLINE/LOCAL) ──────────────────
-  // Real physics: escapers bump off each other — no passing through!
+  // HARD repulsion: escapers bounce off each other like billiard balls
   if (role === 'ESCAPER' && mode !== 'OFFLINE' && !g.isSpectating) {
-    const ESCAPER_PUSH_DIST = PLAYER_RADIUS * 2.2; // collision threshold
-    const ESCAPER_BUMP = 2.5; // bump force
+    const MIN_DIST = PLAYER_RADIUS * 2; // actual touching distance
+    const REPEL_FORCE = 6; // strong velocity impulse on collision
     g.remotePlayers.forEach(p => {
       if (p.role !== 'ESCAPER' || p.isDefeated || p.id === undefined) return;
       const dx = g.playerX - p.x;
       const dy = g.playerY - p.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < ESCAPER_PUSH_DIST && dist > 0) {
-        // Push apart — equal and opposite impulse
-        const overlap = ESCAPER_PUSH_DIST - dist;
-        const nx = dx / dist; // normalized direction
+      if (dist < MIN_DIST && dist > 0.01) {
+        // Hard resolve: instantly push apart so they never overlap
+        const nx = dx / dist;
         const ny = dy / dist;
-        const pushForce = (overlap / ESCAPER_PUSH_DIST) * ESCAPER_BUMP;
-        g.playerX += nx * pushForce;
-        g.playerY += ny * pushForce * 0.5; // less vertical push
-        g.playerVx += nx * pushForce * 0.4;
+        const overlap = MIN_DIST - dist;
+        // Position correction — push local player out of overlap
+        g.playerX += nx * (overlap * 0.6 + 1);
+        g.playerY += ny * (overlap * 0.4 + 0.5);
+        // Velocity impulse — bounce away
+        g.playerVx += nx * REPEL_FORCE;
+        g.playerVy += ny * REPEL_FORCE * 0.5;
         // Clamp to screen
         g.playerX = Math.max(PLAYER_RADIUS, Math.min(canvasW - PLAYER_RADIUS, g.playerX));
         g.playerY = Math.max(200, Math.min(canvasH - PLAYER_RADIUS, g.playerY));
-        // Visual feedback
-        if (overlap > 5) {
-          g.shake = Math.max(g.shake, 3);
-          sparks(g, (g.playerX + p.x) / 2, (g.playerY + p.y) / 2, '#00f2ff');
-        }
+        // Visual feedback — sparks at contact point
+        g.shake = Math.max(g.shake, 5);
+        sparks(g, (g.playerX + p.x) / 2, (g.playerY + p.y) / 2, '#00f2ff');
+        playSound('nearmiss');
       }
     });
-    // Bot-to-bot and bot-to-local-player collision (bots also bump)
+    // Also push bots away from local player
     g.remotePlayers.forEach(p1 => {
       if (!p1.isBot || p1.role !== 'ESCAPER' || p1.isDefeated) return;
-      // Bot vs local player
       const dx = p1.x - g.playerX;
       const dy = p1.y - g.playerY;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < ESCAPER_PUSH_DIST && dist > 0) {
-        const overlap = ESCAPER_PUSH_DIST - dist;
+      if (dist < MIN_DIST && dist > 0.01) {
         const nx = dx / dist;
-        const pushForce = (overlap / ESCAPER_PUSH_DIST) * ESCAPER_BUMP * 0.5;
-        p1.x += nx * pushForce;
+        const overlap = MIN_DIST - dist;
+        p1.x += nx * (overlap * 0.6 + 2);
+        p1.vx += nx * REPEL_FORCE * 0.8;
         p1.x = Math.max(PLAYER_RADIUS, Math.min(canvasW - PLAYER_RADIUS, p1.x));
       }
     });

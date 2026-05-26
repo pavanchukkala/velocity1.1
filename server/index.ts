@@ -110,9 +110,13 @@ function endRoom(io: Server, room: ServerRoom, result: WinResult) {
 }
 
 function spawnRecallAsset(io: Server, room: ServerRoom, eliminatedId: string) {
-  // Always spawn recall asset — recall is a core mechanic, not RNG
+  // Random chance for recall — creates unpredictable, exciting gameplay
+  const elapsed = Math.max(0, MATCH_DURATION_S - room.remainingSeconds);
+  const chance = recallChance(elapsed, MATCH_DURATION_S);
+  if (Math.random() > chance) return; // no recall asset this time
+
   const assetId = 'recall-' + eliminatedId.slice(0, 6);
-  const x = 60 + Math.random() * 680; // random position on map
+  const x = 60 + Math.random() * 680;
   room.pendingRecalls.set(assetId, eliminatedId);
   io.to(room.id).emit('recall-asset-spawned', { id: assetId, x, recallTargetId: eliminatedId });
 }
@@ -348,17 +352,8 @@ async function main() {
       room.players.set(socket.id, creator);
       room.scores.set(socket.id, 0);
 
-      // Pre-fill both teams with bots so WaitingRoom shows a full roster
-      // Real players replace bot slots as they join
-      let botEsc = 0, botAtk = 0;
-      while ([...room.players.values()].filter(p => p.role === 'ESCAPER').length < teamSize) {
-        const b = makeBotPlayer('ESCAPER', botEsc++);
-        room.players.set(b.id, b);
-      }
-      while ([...room.players.values()].filter(p => p.role === 'ATTACKER').length < teamSize) {
-        const b = makeBotPlayer('ATTACKER', botAtk++);
-        room.players.set(b.id, b);
-      }
+      // LOCAL mode: NO bots — players invite friends via codes
+      // Slots stay open for real players to join
 
       rooms.set(roomId, room);
       playerRoom.set(socket.id, roomId);
