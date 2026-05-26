@@ -311,9 +311,9 @@ export function tick(
   g.frameCount++;
 
   // ── Player movement ────────────────────────────────────────────────────────
-  if (role === 'ESCAPER') {
+  if (role === 'ESCAPER' && !g.isSpectating) {
     updateEscaperMovement(g, canvasW, canvasH, cb);
-  } else {
+  } else if (role === 'ATTACKER') {
     updateAttacker(g, canvasW, canvasH, mode, cb);
   }
 
@@ -545,7 +545,7 @@ export function tick(
     if (obs.vx && (obs.x < 0 || obs.x + obs.width > canvasW)) obs.vx *= -1;
 
     // ── Escaper collision ──────────────────────────────────────────────────
-    if (role === 'ESCAPER' && pt.hide <= 0 && g.dashInvincibility <= 0) {
+    if (role === 'ESCAPER' && !g.isSpectating && pt.hide <= 0 && g.dashInvincibility <= 0) {
       const hit = circleRectHit(g.playerX, g.playerY, PLAYER_RADIUS, obs);
       if (hit) {
         if (pt.fire > 0) {
@@ -743,7 +743,7 @@ export function tick(
 
   // ── Trails (enhanced with dash multiplier) ────────────────────────────────
   const trailInterval = g.dashActive > 0 ? 1 : 2;
-  if (role === 'ESCAPER' && g.frameCount % trailInterval === 0 && (Math.abs(g.playerVx) > 0.5 || Math.abs(g.playerVy) > 0.5)) {
+  if (role === 'ESCAPER' && !g.isSpectating && g.frameCount % trailInterval === 0 && (Math.abs(g.playerVx) > 0.5 || Math.abs(g.playerVy) > 0.5)) {
     const trailCount = g.dashActive > 0 ? DASH_TRAIL_MULTIPLIER : 1;
     for (let t = 0; t < trailCount; t++) {
       g.trails.push({
@@ -1464,8 +1464,10 @@ export function recallSelf(g: GameState, canvasW: number, canvasH: number) {
   g.playerY = canvasH - 120;
   g.playerVx = 0;
   g.playerVy = 0;
+  // Brief invincibility so player doesn't instantly die from existing obstacles
+  g.dashInvincibility = 120; // 2 seconds at 60fps
   sparks(g, g.playerX, g.playerY, '#00ff88');
-  floatText(g, g.playerX, g.playerY - 50, '⚡ RECALLED!', '#00ff88', 22);
+  floatText(g, g.playerX, g.playerY - 50, '⚡ RECALLED! You\'re back!', '#00ff88', 22);
   playSound('powerup');
 }
 

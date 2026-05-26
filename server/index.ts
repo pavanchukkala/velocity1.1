@@ -110,11 +110,7 @@ function endRoom(io: Server, room: ServerRoom, result: WinResult) {
 }
 
 function spawnRecallAsset(io: Server, room: ServerRoom, eliminatedId: string) {
-  // Moral intelligence: recall chance depends on how early they were eliminated
-  const elapsed = Math.max(0, MATCH_DURATION_S - room.remainingSeconds);
-  const chance = recallChance(elapsed, MATCH_DURATION_S);
-  if (Math.random() > chance) return; // no recall asset this time
-
+  // Always spawn recall asset — recall is a core mechanic, not RNG
   const assetId = 'recall-' + eliminatedId.slice(0, 6);
   const x = 60 + Math.random() * 680; // random position on map
   room.pendingRecalls.set(assetId, eliminatedId);
@@ -645,8 +641,8 @@ async function main() {
         p.isSpectating = true; // enter spectate — watch only, not counted for win
         room.eliminatedEscapers.add(escaperId);
 
-        // Recall asset — only for real (non-bot) players
-        if (!p.isBot) spawnRecallAsset(io, room, escaperId);
+        // Recall asset — spawn for ALL eliminated escapers (real and bot)
+        spawnRecallAsset(io, room, escaperId);
 
         const active = getActiveEscapers(room);
         io.to(roomId).emit('escaper-eliminated', { escaperId, remaining: active.length });
@@ -670,8 +666,8 @@ async function main() {
       if (!recallTargetId) return;
 
       const target = room.players.get(recallTargetId);
-      // Only recall a spectating real escaper — bots are not recalled
-      if (target && target.role === 'ESCAPER' && target.isSpectating && !target.isBot) {
+      // Recall any spectating escaper — real or bot
+      if (target && target.role === 'ESCAPER' && target.isSpectating) {
         target.isDefeated = false;
         target.isSpectating = false; // back to active play — counts again for win
         room.eliminatedEscapers.delete(recallTargetId);
