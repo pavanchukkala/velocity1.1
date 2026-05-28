@@ -233,7 +233,7 @@ export function NeonVelocity() {
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-[100dvh] bg-[#050505] overflow-hidden select-none touch-none font-sans text-white"
+      className="relative w-full h-[100dvh] bg-[#050505] overflow-hidden select-none touch-none font-sans text-white safe-pad-top safe-pad-bottom safe-pad-left safe-pad-right"
     >
       {/* Background layers */}
       <div className="absolute inset-0 pointer-events-none z-0">

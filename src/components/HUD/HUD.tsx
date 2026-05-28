@@ -74,7 +74,7 @@ export function HUD({ hudRef, role, mode, teamSize, onTriggerAbility, isFullscre
   ].filter(Boolean) as { key: string; icon: React.ReactNode; color: string; label: string; timer: number; maxFrames: number }[];
 
   return (
-    <div className="absolute inset-0 pointer-events-none z-30">
+    <div className="absolute inset-0 pointer-events-none z-30 hud-compact safe-pad-top safe-pad-left safe-pad-right safe-pad-bottom">
 
       {/* ── Top bar ──────────────────────────────────────────────────────────── */}
       <div className="absolute top-0 left-0 w-full flex items-start justify-between p-3 sm:p-4">
@@ -136,7 +136,7 @@ export function HUD({ hudRef, role, mode, teamSize, onTriggerAbility, isFullscre
 
       {/* ── Escaper: TACTICAL ASSETS panel (bottom-left) ─────────────────── */}
       {role === 'ESCAPER' && (
-        <div className="absolute bottom-6 left-3 flex flex-col gap-2 max-w-[160px] sm:max-w-[180px]">
+        <div className="absolute bottom-6 left-3 sm:left-4 flex flex-col gap-1.5 sm:gap-2 max-w-[140px] sm:max-w-[180px]">
           {/* Panel header — always visible so player knows where to look */}
           <div className="flex items-center gap-1.5 mb-0.5">
             <div className="w-2 h-2 rounded-full bg-[#00f2ff] shadow-[0_0_8px_#00f2ff]" />
@@ -223,7 +223,7 @@ export function HUD({ hudRef, role, mode, teamSize, onTriggerAbility, isFullscre
 
       {/* ── Attacker HUD (bottom-right) ───────────────────────────────────── */}
       {role === 'ATTACKER' && (
-        <div className="absolute bottom-4 right-4 flex flex-col items-end gap-3 pointer-events-auto">
+        <div className="absolute bottom-4 right-3 sm:right-4 flex flex-col items-end gap-2 sm:gap-3 pointer-events-auto">
 
           {/* Timer */}
           <div className="flex flex-col items-end gap-1">
@@ -363,7 +363,7 @@ function TouchHint({ role }: { role: Role }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 0.5, y: 0 }}
       exit={{ opacity: 0 }}
-      className="absolute bottom-24 left-1/2 -translate-x-1/2 text-center pointer-events-none"
+      className="absolute bottom-16 sm:bottom-24 left-1/2 -translate-x-1/2 text-center pointer-events-none"
     >
       <p className="text-[9px] uppercase tracking-widest text-white/50">
         {role === 'ESCAPER'

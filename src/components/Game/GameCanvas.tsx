@@ -99,8 +99,12 @@ export function GameCanvas({
     });
     const canvas = canvasRef.current;
     if (canvas) {
-      canvas.width  = dimensions.width;
-      canvas.height = dimensions.height;
+      // DPI-aware: render at device pixel ratio for crisp visuals on Retina/HiDPI
+      const dpr = Math.min(window.devicePixelRatio || 1, 3); // cap at 3x for perf
+      canvas.width  = Math.round(dimensions.width * dpr);
+      canvas.height = Math.round(dimensions.height * dpr);
+      canvas.style.width  = dimensions.width + 'px';
+      canvas.style.height = dimensions.height + 'px';
     }
   }, [dimensions]);
 
@@ -407,6 +411,9 @@ export function GameCanvas({
 
       // Draw
       ctx.save();
+      // DPI scaling — draw in CSS-pixel coordinates on a HiDPI backing store
+      const dpr = canvas.width / w;
+      ctx.scale(dpr, dpr);
       if (g.shake > 1)
         ctx.translate((Math.random() - 0.5) * g.shake, (Math.random() - 0.5) * g.shake);
 
@@ -487,10 +494,8 @@ export function GameCanvas({
     <div className="relative w-full h-full">
       <canvas
         ref={canvasRef}
-        width={dimensions.width}
-        height={dimensions.height}
-        className="game-canvas absolute inset-0 w-full h-full"
-        style={{ display: 'block' }}
+        className="game-canvas absolute inset-0"
+        style={{ display: 'block', width: '100%', height: '100%' }}
       />
       <HUD
         hudRef={hudRef}

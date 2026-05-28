@@ -238,9 +238,22 @@ function spawnPowerUp(canvasW: number): PowerUp {
   };
 }
 
+// ── Performance-adaptive particle budget ──────────────────────────────────────
+// Detects device capability and reduces particle counts on low-end hardware
+const _perfCores = navigator.hardwareConcurrency ?? 2;
+const _perfMem = (navigator as any).deviceMemory ?? 4;
+const _particleScale = _perfCores <= 2 || _perfMem <= 2 ? 0.4 
+  : _perfCores <= 4 ? 0.7 : 1.0;
+const MAX_PARTICLES_TOTAL = _perfCores <= 2 ? 80 : _perfCores <= 4 ? 180 : 350;
+const MAX_TRAILS_TOTAL = _perfCores <= 2 ? 25 : _perfCores <= 4 ? 60 : 120;
+
 // ── Particle factory ──────────────────────────────────────────────────────────
 function explosion(g: GameState, x: number, y: number, color: string, count = EXPLOSION_PARTICLE_COUNT) {
-  for (let i = 0; i < count; i++) {
+  const adjustedCount = Math.max(3, Math.round(count * _particleScale));
+  // Cap total particles to prevent frame drops
+  const available = MAX_PARTICLES_TOTAL - g.particles.length;
+  const spawnCount = Math.min(adjustedCount, available);
+  for (let i = 0; i < spawnCount; i++) {
     const angle = Math.random() * Math.PI * 2;
     const speed = 2 + Math.random() * 7;
     g.particles.push({
@@ -256,7 +269,7 @@ function explosion(g: GameState, x: number, y: number, color: string, count = EX
 }
 
 function sparks(g: GameState, x: number, y: number, color: string) {
-  explosion(g, x, y, color, SPARK_PARTICLE_COUNT);
+  explosion(g, x, y, color, Math.round(SPARK_PARTICLE_COUNT * _particleScale));
 }
 
 function floatText(
@@ -743,8 +756,8 @@ export function tick(
 
   // ── Trails (enhanced with dash multiplier) ────────────────────────────────
   const trailInterval = g.dashActive > 0 ? 1 : 2;
-  if (role === 'ESCAPER' && !g.isSpectating && g.frameCount % trailInterval === 0 && (Math.abs(g.playerVx) > 0.5 || Math.abs(g.playerVy) > 0.5)) {
-    const trailCount = g.dashActive > 0 ? DASH_TRAIL_MULTIPLIER : 1;
+  if (role === 'ESCAPER' && !g.isSpectating && g.trails.length < MAX_TRAILS_TOTAL && g.frameCount % trailInterval === 0 && (Math.abs(g.playerVx) > 0.5 || Math.abs(g.playerVy) > 0.5)) {
+    const trailCount = g.dashActive > 0 ? Math.round(DASH_TRAIL_MULTIPLIER * _particleScale) : 1;
     for (let t = 0; t < trailCount; t++) {
       g.trails.push({
         x: g.playerX + (Math.random() - 0.5) * (g.dashActive > 0 ? 12 : 0),

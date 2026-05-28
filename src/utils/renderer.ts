@@ -6,6 +6,27 @@ import {
 } from '../constants';
 import type { Obstacle, PowerUp, BotState, RemotePlayer, AttackerReticle, TrailPoint, SpeedLine, Particle, FloatingText } from '../types';
 
+// ── Performance-adaptive rendering ────────────────────────────────────────────
+// Skip expensive shadowBlur on low-end devices for better FPS
+const _rCores = navigator.hardwareConcurrency ?? 2;
+const _rMem = (navigator as any).deviceMemory ?? 4;
+const _enableGlow = _rCores > 2 && _rMem > 2; // disable glow on low-end
+
+/** Set shadowBlur only if device can handle it */
+function glow(ctx: CanvasRenderingContext2D, blur: number, color: string) {
+  if (_enableGlow) {
+    ctx.shadowBlur = blur;
+    ctx.shadowColor = color;
+  }
+}
+
+/** Clear shadowBlur */
+function noGlow(ctx: CanvasRenderingContext2D) {
+  if (_enableGlow) {
+    ctx.shadowBlur = 0;
+  }
+}
+
 // Color cache to avoid re-parsing hex on every frame (W2 optimization)
 const _colorCache = new Map<string, string>();
 const _COLOR_CACHE_MAX = 128;
@@ -83,14 +104,13 @@ export function drawParticles(ctx: CanvasRenderingContext2D, particles: Particle
     const alpha = p.life / p.maxLife;
     ctx.globalAlpha = alpha;
     ctx.fillStyle = p.color;
-    ctx.shadowBlur = 6;
-    ctx.shadowColor = p.color;
+    glow(ctx, 6, p.color);
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
     ctx.fill();
   });
   ctx.globalAlpha = 1;
-  ctx.shadowBlur = 0;
+  noGlow(ctx);
   ctx.restore();
 }
 
