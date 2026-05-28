@@ -156,7 +156,8 @@ export function GameCanvas({
         gRef.current.touchY = y;
       } else {
         dropAttack(gRef.current, x, dimRef.current.width);
-        socketRef.current?.emit('drop-attack', { roomId: roomIdRef.current, x });
+        // Normalize x to 0-1 for cross-device sync
+        socketRef.current?.emit('drop-attack', { roomId: roomIdRef.current, x: x / dimRef.current.width });
       }
     };
     const onTouchMove = (e: TouchEvent) => {
@@ -177,7 +178,8 @@ export function GameCanvas({
       if (role === 'ATTACKER') {
         const { x } = getXY(e.clientX, e.clientY);
         dropAttack(gRef.current, x, dimRef.current.width);
-        socketRef.current?.emit('drop-attack', { roomId: roomIdRef.current, x });
+        // Normalize x to 0-1 for cross-device sync
+        socketRef.current?.emit('drop-attack', { roomId: roomIdRef.current, x: x / dimRef.current.width });
       }
     };
 
@@ -197,16 +199,29 @@ export function GameCanvas({
   useEffect(() => {
     if (!socket) return;
 
-    const onPlayerMoved = ({ id, x, y, vx, isShielded, isFiring, isHidden }: {
-      id: string; x: number; y: number; vx: number;
+    const onPlayerMoved = ({ id, nx, ny, vx, isShielded, isFiring, isHidden }: {
+      id: string; nx: number; ny: number; vx: number;
       isShielded: boolean; isFiring: boolean; isHidden: boolean;
     }) => {
       const p = gRef.current.remotePlayers.find(r => r.id === id);
-      if (p) { p.x = x; p.y = y; p.vx = vx; p.isShielded = isShielded; p.isFiring = isFiring; p.isHidden = isHidden; }
+      if (p) {
+        // Denormalize: convert 0-1 normalized coords to local canvas pixels
+        const w = dimRef.current.width;
+        const h = dimRef.current.height;
+        p.x = nx * w;
+        p.y = ny * h;
+        p.vx = vx * w / 800; // scale velocity proportionally
+        p.isShielded = isShielded; p.isFiring = isFiring; p.isHidden = isHidden;
+      }
     };
 
-    const onAttackDropped = ({ obstacle }: { obstacle: Obstacle }) =>
-      receiveObstacle(gRef.current, obstacle);
+    const onAttackDropped = ({ obstacle }: { obstacle: Obstacle }) => {
+      // Denormalize obstacle position to local canvas size
+      const w = dimRef.current.width;
+      const h = dimRef.current.height;
+      const localObs = { ...obstacle, x: obstacle.x * w, y: obstacle.y * h, width: obstacle.width * w, height: obstacle.height * h };
+      receiveObstacle(gRef.current, localObs);
+    };
 
     const onAbilityUsed = ({ ability }: { ability: 'SWARM' | 'EMP' | 'FIREWALL' }) =>
       receiveAbility(gRef.current, ability, dimRef.current.width, dimRef.current.height);
@@ -215,8 +230,9 @@ export function GameCanvas({
       markRemotePlayerEliminated(gRef.current, escaperId);
 
     const onRecallAssetSpawned = ({ id, x, recallTargetId }: { id: string; x: number; recallTargetId: string }) => {
-      // Add recall asset — lasts 25 seconds (1500 frames)
-      recallAssetsRef.current.push({ id, x, y: -40, recallTargetId, life: 1500 });
+      // Denormalize x from 0-1 to local canvas pixels, then add recall asset
+      const localX = x * dimRef.current.width;
+      recallAssetsRef.current.push({ id, x: localX, y: -40, recallTargetId, life: 1500 });
     };
 
     const onEscaperRecalled = ({ escaperId }: { escaperId: string }) => {
@@ -362,21 +378,32 @@ export function GameCanvas({
           });
         },
         emitMove: (x, y, vx, vy, states) => {
-          if (g.frameCount % 3 === 0)
+          if (g.frameCount % 3 === 0) {
+            // Normalize to 0-1 range for cross-device sync
+            const nx = x / w;
+            const ny = y / h;
+            const nvx = vx / w * 800; // normalize velocity
             socketRef.current?.emit('player-move', {
-              roomId: roomIdRef.current, x, y, vx, vy, powerUpStates: states,
+              roomId: roomIdRef.current, x: nx, y: ny, vx: nvx, vy, powerUpStates: states,
             });
+          }
         },
         emitBotMove: (botId, x, y, vx, vy) => {
-          if (g.frameCount % 4 === 0 && isHostRef.current)
+          if (g.frameCount % 4 === 0 && isHostRef.current) {
+            // Normalize to 0-1 range
+            const nx = x / w;
+            const ny = y / h;
+            const nvx = vx / w * 800;
             socketRef.current?.emit('bot-move', {
-              roomId: roomIdRef.current, botId, x, y, vx, vy,
+              roomId: roomIdRef.current, botId, x: nx, y: ny, vx: nvx, vy,
             });
+          }
         },
         emitBotDrop: (botId, x) => {
           if (isHostRef.current)
             socketRef.current?.emit('bot-drop', {
-              roomId: roomIdRef.current, botId, x,
+              // Normalize x to 0-1
+              roomId: roomIdRef.current, botId, x: x / w,
             });
         },
       }, recallAssetsRef.current, teamSizeRef.current);

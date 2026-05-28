@@ -116,7 +116,7 @@ function spawnRecallAsset(io: Server, room: ServerRoom, eliminatedId: string) {
   if (Math.random() > chance) return; // no recall asset this time
 
   const assetId = 'recall-' + eliminatedId.slice(0, 6);
-  const x = 60 + Math.random() * 680;
+  const x = 0.08 + Math.random() * 0.84; // normalized 0-1 position
   room.pendingRecalls.set(assetId, eliminatedId);
   io.to(room.id).emit('recall-asset-spawned', { id: assetId, x, recallTargetId: eliminatedId });
 }
@@ -477,8 +477,8 @@ async function main() {
       const p = room.players.get(socket.id);
       if (!p) return;
 
-      // Validate coordinates and velocity
-      const coords = validateCoordinates(data?.x, data?.y, 1200, 1400);
+      // Validate normalized coordinates (0-1 range)
+      const coords = validateCoordinates(data?.x, data?.y, 1.1, 1.1);
       if (!coords) return;
       const vel = validateVelocity(data?.vx, data?.vy);
       if (!vel) return;
@@ -489,9 +489,9 @@ async function main() {
       p.isFiring   = powerUpStates.isFiring;
       p.isHidden   = powerUpStates.isHidden;
 
-      // Broadcast to everyone else in room (not back to sender)
+      // Broadcast normalized coords to everyone else — each client denormalizes locally
       socket.to(roomId).emit('player-moved', {
-        id: socket.id, x: coords.x, y: coords.y, vx: vel.vx, vy: vel.vy,
+        id: socket.id, nx: coords.x, ny: coords.y, vx: vel.vx, vy: vel.vy,
         isShielded: p.isShielded, isFiring: p.isFiring, isHidden: p.isHidden,
       });
     });
@@ -514,15 +514,15 @@ async function main() {
       const bot = room.players.get(data.botId);
       if (!bot || !bot.isBot) return;
 
-      const coords = validateCoordinates(data?.x, data?.y, 1200, 1400);
+      const coords = validateCoordinates(data?.x, data?.y, 1.1, 1.1);
       if (!coords) return;
       const vel = validateVelocity(data?.vx, data?.vy);
       if (!vel) return;
 
       bot.x = coords.x; bot.y = coords.y; bot.vx = vel.vx;
-
+      // Broadcast normalized bot coords
       socket.to(roomId).emit('player-moved', {
-        id: bot.id, x: coords.x, y: coords.y, vx: vel.vx, vy: vel.vy,
+        id: bot.id, nx: coords.x, ny: coords.y, vx: vel.vx, vy: vel.vy,
         isShielded: bot.isShielded, isFiring: bot.isFiring, isHidden: bot.isHidden,
       });
     });
@@ -543,22 +543,23 @@ async function main() {
       if (dropEnergy < 5) return; // Not enough energy
       playerEnergy.set(socket.id, dropEnergy - 5);
 
-      const x = typeof data?.x === 'number' && isFinite(data.x)
-        ? Math.max(20, Math.min(data.x, 1200)) : 400;
+      // Normalize the drop X position (0-1 range)
+      const rawX = typeof data?.x === 'number' && isFinite(data.x)
+        ? Math.max(0, Math.min(data.x, 1)) : 0.5;
 
+      // Broadcast normalized obstacle — each client scales to local size
       const obs = {
         id: nanoid(8),
-        x: x - 20,
-        y: -50,
-        width: 40,
-        height: 36,
+        x: rawX - 0.025,   // normalized width offset
+        y: -0.05,           // start above screen
+        width: 0.05,        // 5% of screen width
+        height: 0.036,      // proportional height
         color: '#ff0055',
         type: 'BLOCK' as const,
         vx: 0,
         nearMissTriggered: false,
         spawnedBy: socket.id,
       };
-      // Broadcast to all in room
       io.to(roomId).emit('attack-dropped', { obstacle: obs });
     });
 
@@ -576,15 +577,16 @@ async function main() {
       const bot = room.players.get(data.botId);
       if (!bot || !bot.isBot || bot.role !== 'ATTACKER') return;
 
-      const x = typeof data?.x === 'number' && isFinite(data.x)
-        ? Math.max(20, Math.min(data.x, 1200)) : 400;
+      // Normalized x (0-1 range)
+      const rawX = typeof data?.x === 'number' && isFinite(data.x)
+        ? Math.max(0, Math.min(data.x, 1)) : 0.5;
 
       const obs = {
         id: nanoid(8),
-        x: x - 20,
-        y: -50,
-        width: 40,
-        height: 36,
+        x: rawX - 0.025,
+        y: -0.05,
+        width: 0.05,
+        height: 0.036,
         color: '#ff0055',
         type: 'BLOCK' as const,
         vx: 0,
