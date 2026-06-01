@@ -79,7 +79,37 @@ export function WaitingRoom({
       </div>
 
       {/* Mission Briefing */}
-      <MissionBriefing role={role} mode={mode} />
+      <div className="w-full max-w-lg mb-4 bg-white/[0.03] border border-white/10 rounded-2xl p-4">
+        <p className="text-[9px] uppercase tracking-widest text-white/40 text-center mb-2">
+          Mission Briefing
+        </p>
+        {role === 'ESCAPER' ? (
+          <div className="flex items-center gap-2 text-xs text-[#00ff88]">
+            <Shield size={14} />
+            <span>Survive 90s. If even 1 escaper survives, your team wins.</span>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2 text-xs text-[#ff0055]">
+              <Skull size={14} />
+              <span>Eliminate ALL escapers before time runs out.</span>
+            </div>
+            <div className="flex gap-2 mt-2">
+              {[
+                { name: 'SWARM', cost: 18, icon: '💥' },
+                { name: 'EMP', cost: 30, icon: '⚡' },
+                { name: 'WALL', cost: 45, icon: '🔥' },
+              ].map(a => (
+                <div key={a.name} className="flex-1 text-center p-1.5 bg-black/30 rounded-lg border border-white/5">
+                  <div className="text-[10px]">{a.icon}</div>
+                  <div className="text-[8px] font-bold text-white/50">{a.name}</div>
+                  <div className="text-[8px] text-[#ff0055]">{a.cost}E</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Local room codes */}
       {mode === 'LOCAL' && localRoomData && (
