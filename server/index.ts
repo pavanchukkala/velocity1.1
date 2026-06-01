@@ -14,14 +14,6 @@ const PORT = parseInt(process.env.PORT ?? '3000', 10);
 const MATCH_DURATION_S = 90;
 const DEFAULT_TEAM_SIZE = 2;
 
-// Recall chance based on time elapsed (moral intelligence)
-function recallChance(elapsed: number, duration: number): number {
-  const pct = elapsed / duration;
-  if (pct < 0.33) return 0.72;  // eliminated early → high recall chance
-  if (pct < 0.78) return 0.42;  // mid game → moderate
-  return 0.18;                   // late game → low but possible
-}
-
 // ── Bot name pool ─────────────────────────────────────────────────────────────
 
 const BOT_NAMES = [
@@ -115,60 +107,36 @@ function endRoom(io: Server, room: ServerRoom, result: WinResult) {
   io.to(room.id).emit('game-end', { result, scores });
 }
 
+// Pure luck — no formulas, no patterns, no guarantees.
+// Every elimination rolls the dice fresh. Sometimes generous, sometimes cruel.
 function spawnRecallAsset(io: Server, room: ServerRoom, eliminatedId: string) {
-  // Track elimination count per room
-  (room as any).eliminationCount = ((room as any).eliminationCount || 0) + 1;
+  // Roll how many tokens to drop: pure random
+  // ~30% chance = 0 tokens (nothing, tough luck)
+  // ~35% chance = 1 token
+  // ~20% chance = 2 tokens
+  // ~10% chance = 3 tokens
+  // ~5%  chance = 4+ tokens (rare jackpot)
+  const roll = Math.random();
+  let tokenCount: number;
+  if (roll < 0.30)      tokenCount = 0;  // no recall — sometimes life is unfair
+  else if (roll < 0.65) tokenCount = 1;
+  else if (roll < 0.85) tokenCount = 2;
+  else if (roll < 0.95) tokenCount = 3;
+  else                  tokenCount = 3 + Math.floor(Math.random() * 3); // 3-5 tokens
 
-  let chance: number;
-  if ((room as any).eliminationCount === 1) {
-    // First elimination — ALWAYS spawn recall (guaranteed)
-    chance = 1.0;
-  } else {
-    // Subsequent eliminations — use time-based chance
-    const elapsed = Math.max(0, MATCH_DURATION_S - room.remainingSeconds);
-    chance = recallChance(elapsed, MATCH_DURATION_S);
-  }
-  if (Math.random() > chance) return; // no recall asset this time
+  if (tokenCount === 0) return; // nothing drops. pure luck.
 
-  const assetId = 'recall-' + eliminatedId.slice(0, 6);
-  const x = 0.08 + Math.random() * 0.84; // normalized 0-1 position
-  room.pendingRecalls.set(assetId, eliminatedId);
-  io.to(room.id).emit('recall-asset-spawned', { id: assetId, x, recallTargetId: eliminatedId });
-
-  // Recurring respawn with luck — if teammate misses the recall token,
-  // keep respawning with decreasing probability until picked up or match ends
-  let respawnCount = 0;
-  const maxRespawns = 5; // max total respawns
-
-  function scheduleRespawn(prevAssetId: string) {
+  // Drop each token at a random delay — unpredictable timing
+  for (let i = 0; i < tokenCount; i++) {
+    const delay = Math.random() * 15000; // anywhere from instant to 15 seconds later
     setTimeout(() => {
-      // Stop if game over, or recall was picked up, or max respawns reached
-      if (room.gamePhase === 'GAMEOVER') return;
-      if (!room.pendingRecalls.has(prevAssetId)) return; // picked up!
-      respawnCount++;
-      if (respawnCount > maxRespawns) return;
-
-      // Luck-based chance: starts at 80% and decreases each respawn
-      const respawnChance = Math.max(0.25, 0.80 - (respawnCount * 0.12));
-      if (Math.random() > respawnChance) {
-        // Unlucky — try again later with lower chance
-        scheduleRespawn(prevAssetId);
-        return;
-      }
-
-      // Remove old pending recall and spawn new one at random position
-      room.pendingRecalls.delete(prevAssetId);
-      const newId = assetId + '-r' + respawnCount;
-      const newX = 0.08 + Math.random() * 0.84;
-      room.pendingRecalls.set(newId, eliminatedId);
-      io.to(room.id).emit('recall-asset-spawned', { id: newId, x: newX, recallTargetId: eliminatedId });
-
-      // Schedule next potential respawn
-      scheduleRespawn(newId);
-    }, 6000 + Math.random() * 4000); // 6-10 seconds between respawns (unpredictable)
+      if (room.gamePhase === 'GAMEOVER') return; // game already ended
+      const id = 'recall-' + eliminatedId.slice(0, 6) + '-' + i + '-' + Math.floor(Math.random() * 9999);
+      const x = 0.08 + Math.random() * 0.84;
+      room.pendingRecalls.set(id, eliminatedId);
+      io.to(room.id).emit('recall-asset-spawned', { id, x, recallTargetId: eliminatedId });
+    }, delay);
   }
-
-  scheduleRespawn(assetId);
 }
 
 function tryMatchmaking(io: Server) {
