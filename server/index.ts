@@ -76,6 +76,12 @@ const playerEnergy = new Map<string, number>();
 
 const playerRoom = new Map<string, string>();
 
+// ── Score anti-cheat ──────────────────────────────────────────────────────────
+const playerScoreHistory = new Map<string, { lastScore: number; lastTime: number }>();
+
+// ── Bot movement validation ───────────────────────────────────────────────────
+const botLastPos = new Map<string, { x: number; y: number }>();
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getRoomPlayers(room: ServerRoom): ServerPlayer[] {
@@ -110,15 +116,59 @@ function endRoom(io: Server, room: ServerRoom, result: WinResult) {
 }
 
 function spawnRecallAsset(io: Server, room: ServerRoom, eliminatedId: string) {
-  // Random chance for recall — creates unpredictable, exciting gameplay
-  const elapsed = Math.max(0, MATCH_DURATION_S - room.remainingSeconds);
-  const chance = recallChance(elapsed, MATCH_DURATION_S);
+  // Track elimination count per room
+  (room as any).eliminationCount = ((room as any).eliminationCount || 0) + 1;
+
+  let chance: number;
+  if ((room as any).eliminationCount === 1) {
+    // First elimination — ALWAYS spawn recall (guaranteed)
+    chance = 1.0;
+  } else {
+    // Subsequent eliminations — use time-based chance
+    const elapsed = Math.max(0, MATCH_DURATION_S - room.remainingSeconds);
+    chance = recallChance(elapsed, MATCH_DURATION_S);
+  }
   if (Math.random() > chance) return; // no recall asset this time
 
   const assetId = 'recall-' + eliminatedId.slice(0, 6);
   const x = 0.08 + Math.random() * 0.84; // normalized 0-1 position
   room.pendingRecalls.set(assetId, eliminatedId);
   io.to(room.id).emit('recall-asset-spawned', { id: assetId, x, recallTargetId: eliminatedId });
+
+  // Recurring respawn with luck — if teammate misses the recall token,
+  // keep respawning with decreasing probability until picked up or match ends
+  let respawnCount = 0;
+  const maxRespawns = 5; // max total respawns
+
+  function scheduleRespawn(prevAssetId: string) {
+    setTimeout(() => {
+      // Stop if game over, or recall was picked up, or max respawns reached
+      if (room.gamePhase === 'GAMEOVER') return;
+      if (!room.pendingRecalls.has(prevAssetId)) return; // picked up!
+      respawnCount++;
+      if (respawnCount > maxRespawns) return;
+
+      // Luck-based chance: starts at 80% and decreases each respawn
+      const respawnChance = Math.max(0.25, 0.80 - (respawnCount * 0.12));
+      if (Math.random() > respawnChance) {
+        // Unlucky — try again later with lower chance
+        scheduleRespawn(prevAssetId);
+        return;
+      }
+
+      // Remove old pending recall and spawn new one at random position
+      room.pendingRecalls.delete(prevAssetId);
+      const newId = assetId + '-r' + respawnCount;
+      const newX = 0.08 + Math.random() * 0.84;
+      room.pendingRecalls.set(newId, eliminatedId);
+      io.to(room.id).emit('recall-asset-spawned', { id: newId, x: newX, recallTargetId: eliminatedId });
+
+      // Schedule next potential respawn
+      scheduleRespawn(newId);
+    }, 6000 + Math.random() * 4000); // 6-10 seconds between respawns (unpredictable)
+  }
+
+  scheduleRespawn(assetId);
 }
 
 function tryMatchmaking(io: Server) {
@@ -242,7 +292,8 @@ async function main() {
       origin: process.env.ALLOWED_ORIGINS?.split(',') ?? [
         'http://localhost:3000',
         'http://localhost:5173',
-        'https://velocity-coral-rho.vercel.app',
+        'https://velocity1-1.onrender.com',
+        'https://neon-velocity.vercel.app',
       ],
       methods: ['GET', 'POST'],
       credentials: true,
@@ -302,7 +353,7 @@ async function main() {
       if (!checkRateLimit(socket.id, 'join-matchmaking', 2)) return;
       const name = validateName(data?.name);
       const role = validateRole(data?.role);
-      const teamSize = [2, 3, 4].includes(data?.teamSize ?? 0) ? (data.teamSize as number) : DEFAULT_TEAM_SIZE;
+      const teamSize = [1, 2, 3, 4].includes(data?.teamSize ?? 0) ? (data.teamSize as number) : DEFAULT_TEAM_SIZE;
       // Remove any existing entry for this socket
       const escIdx = escaperQueue.findIndex(e => e.socketId === socket.id);
       if (escIdx !== -1) escaperQueue.splice(escIdx, 1);
@@ -328,7 +379,7 @@ async function main() {
       if (!checkRateLimit(socket.id, 'create-local-room', 2)) return;
       const name = validateName(data?.name);
       const role = validateRole(data?.role);
-      const teamSize = [2, 3, 4].includes(data?.teamSize ?? 0) ? (data.teamSize as number) : DEFAULT_TEAM_SIZE;
+      const teamSize = [1, 2, 3, 4].includes(data?.teamSize ?? 0) ? (data.teamSize as number) : DEFAULT_TEAM_SIZE;
       const roomId = 'local-' + nanoid(5);
       const escaperCode = 'ESC-' + nanoid(4).toUpperCase();
       const attackerCode = 'ATK-' + nanoid(4).toUpperCase();
@@ -519,10 +570,26 @@ async function main() {
       const vel = validateVelocity(data?.vx, data?.vy);
       if (!vel) return;
 
-      bot.x = coords.x; bot.y = coords.y; bot.vx = vel.vx;
+      // Bot movement speed validation — cap at 0.1 normalized per update
+      const lastPos = botLastPos.get(data.botId);
+      let finalX = coords.x;
+      let finalY = coords.y;
+      if (lastPos) {
+        const dx = coords.x - lastPos.x;
+        const dy = coords.y - lastPos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 0.1) {
+          // Teleport detected — use last known position instead
+          finalX = lastPos.x;
+          finalY = lastPos.y;
+        }
+      }
+      botLastPos.set(data.botId, { x: finalX, y: finalY });
+
+      bot.x = finalX; bot.y = finalY; bot.vx = vel.vx;
       // Broadcast normalized bot coords
       socket.to(roomId).emit('player-moved', {
-        id: bot.id, nx: coords.x, ny: coords.y, vx: vel.vx, vy: vel.vy,
+        id: bot.id, nx: finalX, ny: finalY, vx: vel.vx, vy: vel.vy,
         isShielded: bot.isShielded, isFiring: bot.isFiring, isHidden: bot.isHidden,
       });
     });
@@ -577,9 +644,9 @@ async function main() {
       const bot = room.players.get(data.botId);
       if (!bot || !bot.isBot || bot.role !== 'ATTACKER') return;
 
-      // Normalized x (0-1 range)
+      // Normalized x — clamped to [0.02, 0.98] for bot drops
       const rawX = typeof data?.x === 'number' && isFinite(data.x)
-        ? Math.max(0, Math.min(data.x, 1)) : 0.5;
+        ? Math.max(0.02, Math.min(data.x, 0.98)) : 0.5;
 
       const obs = {
         id: nanoid(8),
@@ -636,11 +703,20 @@ async function main() {
         p.isSpectating = true; // enter spectate — watch only, not counted for win
         room.eliminatedEscapers.add(escaperId);
 
-        // Recall asset — spawn for ALL eliminated escapers (real and bot)
-        spawnRecallAsset(io, room, escaperId);
+        // Recall asset — spawn only when team has teammates to pick it up (not 1v1)
+        if (room.teamSize > 1) {
+          spawnRecallAsset(io, room, escaperId);
+        }
 
         const active = getActiveEscapers(room);
         io.to(roomId).emit('escaper-eliminated', { escaperId, remaining: active.length });
+
+        // Award attacker score — find which attacker(s) are in the room
+        for (const [pid, pl] of room.players) {
+          if (pl.role === 'ATTACKER' && !pl.isBot) {
+            io.to(pid).emit('attacker-scored', { points: 1200 });
+          }
+        }
 
         // Attackers win only when ZERO active escapers remain
         if (active.length === 0) {
@@ -683,7 +759,21 @@ async function main() {
       const room = rooms.get(roomId);
       if (!room) return;
       const score = typeof data?.score === 'number' && isFinite(data.score)
-        ? Math.max(0, Math.min(data.score, 999_999_999)) : 0;
+        ? Math.max(0, Math.min(data.score, 500_000)) : 0;
+
+      // Score anti-cheat validation
+      const now = Date.now();
+      const history = playerScoreHistory.get(socket.id);
+      if (history) {
+        const scoreDelta = score - history.lastScore;
+        const timeDelta = now - history.lastTime;
+        if (scoreDelta > 5000 && timeDelta < 1000) {
+          console.warn(`[ANTI-CHEAT] ${socket.id} score spike: +${scoreDelta} in ${timeDelta}ms — rejected`);
+          return; // reject suspicious score update
+        }
+      }
+      playerScoreHistory.set(socket.id, { lastScore: score, lastTime: now });
+
       room.scores.set(socket.id, score);
     });
 
@@ -738,9 +828,10 @@ async function main() {
       const ai = attackerQueue.findIndex(e => e.socketId === socket.id);
       if (ai !== -1) attackerQueue.splice(ai, 1);
 
-      // Cleanup rate limit entries and energy
+      // Cleanup rate limit entries, energy, and score history
       cleanupRateLimits(socket.id);
       playerEnergy.delete(socket.id);
+      playerScoreHistory.delete(socket.id);
     });
   });
 

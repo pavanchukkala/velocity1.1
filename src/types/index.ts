@@ -233,6 +233,28 @@ export interface GameState {
   // Bullet Time
   bulletTimeActive: number;           // frames remaining
   recentNearMissTimestamps: number[]; // frame numbers of recent near-misses
+
+  // Ghost Mode (near-miss streak)
+  ghostModeTimer: number;             // frames remaining of ghost boost
+
+  // Boost invincibility
+  boostInvincTimer: number;           // i-frames on boost activation
+
+  // Luck tracking
+  dodgesSincePowerUp: number;         // obstacles dodged without power-up
+
+  // Stats tracking
+  totalNearMisses: number;            // total near-misses (for game over stats)
+  powerUpsCollected: number;          // total power-ups picked up
+
+  // Level flash effect
+  levelFlashTimer: number;            // frames remaining of level-up flash
+
+  // Attacker kill streak (online)
+  attackerKillStreak: number;
+
+  // Edge danger
+  edgeDangerShown: boolean;           // floating text shown once per session
 }
 
 // ─── Socket Events (Client → Server) ────────────────────────────────────────
@@ -263,6 +285,7 @@ export interface ServerEvents {
   'attack-dropped': { obstacle: Obstacle };
   'ability-used': { ability: AttackerAbility; fromId: string };
   'escaper-eliminated': { escaperId: string; remaining: number };
+  'attacker-scored': { points: number };
   'recall-asset-spawned': { id: string; x: number; recallTargetId: string };
   'escaper-recalled': { escaperId: string };
   'game-end': { result: WinResult; scores: Record<string, number> };
@@ -275,7 +298,7 @@ export interface LobbyState {
   name: string;
   role: Role;
   mode: RoomMode;
-  teamSize: 2 | 3 | 4;
+  teamSize: 1 | 2 | 3 | 4;
   localCode: string;
   // Local room creation result
   localRoomData: { escaperCode: string; attackerCode: string; roomId: string } | null;

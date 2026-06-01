@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'motion/react';
-import { Users, Wifi, Copy, Check, Play, ArrowLeft, Bot } from 'lucide-react';
+import { Users, Wifi, Copy, Check, Play, ArrowLeft, Bot, Skull, Zap, Shield } from 'lucide-react';
 import { useState } from 'react';
 import type { RemotePlayer, Role, RoomMode } from '../../types';
 
@@ -77,6 +77,9 @@ export function WaitingRoom({
           maxSlots={4}
         />
       </div>
+
+      {/* Mission Briefing */}
+      <MissionBriefing role={role} mode={mode} />
 
       {/* Local room codes */}
       {mode === 'LOCAL' && localRoomData && (

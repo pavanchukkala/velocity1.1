@@ -941,3 +941,54 @@ export function applyAberration(
   }
   ctx.putImageData(out, 0, 0);
 }
+
+// ── Screen Edge Danger Vignette ───────────────────────────────────────────────
+export function drawEdgeDangerVignette(
+  ctx: CanvasRenderingContext2D,
+  playerX: number,
+  w: number,
+  h: number,
+  dangerZone: number,
+) {
+  // Left edge
+  if (playerX < dangerZone) {
+    const intensity = 1 - (playerX / dangerZone);
+    const grad = ctx.createLinearGradient(0, 0, dangerZone * 1.5, 0);
+    grad.addColorStop(0, `rgba(255, 0, 40, ${0.35 * intensity})`);
+    grad.addColorStop(1, 'rgba(255, 0, 40, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, dangerZone * 1.5, h);
+  }
+  // Right edge
+  if (playerX > w - dangerZone) {
+    const intensity = 1 - ((w - playerX) / dangerZone);
+    const grad = ctx.createLinearGradient(w, 0, w - dangerZone * 1.5, 0);
+    grad.addColorStop(0, `rgba(255, 0, 40, ${0.35 * intensity})`);
+    grad.addColorStop(1, 'rgba(255, 0, 40, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(w - dangerZone * 1.5, 0, dangerZone * 1.5, h);
+  }
+}
+
+// ── Level-Up Flash Overlay ────────────────────────────────────────────────────
+export function drawLevelFlash(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  timer: number,
+  maxTimer: number,
+) {
+  if (timer <= 0) return;
+  const progress = timer / maxTimer;
+  // White flash that fades out
+  ctx.save();
+  ctx.globalAlpha = 0.3 * progress;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+  // Scan line effect
+  ctx.globalAlpha = 0.15 * progress;
+  for (let y = 0; y < h; y += 4) {
+    ctx.fillRect(0, y, w, 1);
+  }
+  ctx.restore();
+}

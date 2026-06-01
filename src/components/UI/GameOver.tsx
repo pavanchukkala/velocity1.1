@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { RotateCcw, Home, Trophy, AlertTriangle, Zap, Target, Clock } from 'lucide-react';
+import { RotateCcw, Home, Trophy, AlertTriangle, Zap, Target, Clock, Crosshair, Star } from 'lucide-react';
 import type { Role, WinResult, RoomMode } from '../../types';
 
 interface GameOverProps {
@@ -11,10 +11,13 @@ interface GameOverProps {
   mode: RoomMode;
   onRestart: () => void;
   onLobby: () => void;
+  nearMisses?: number;
+  powerUpsCollected?: number;
 }
 
 export function GameOver({
   score, highScore, level, role, winResult, mode, onRestart, onLobby,
+  nearMisses = 0, powerUpsCollected = 0,
 }: GameOverProps) {
   const isWin = getIsWin(role, winResult);
   const { headline, subline, accentColor, bgColor, icon } = getResultConfig(role, winResult, level);
@@ -107,7 +110,7 @@ export function GameOver({
         </p>
 
         {/* Stats grid */}
-        <div className="grid grid-cols-3 gap-3 w-full mb-8">
+        <div className="flex flex-wrap justify-center gap-3 w-full mb-8">
           <StatCard
             label="Final Score"
             value={score.toLocaleString()}
@@ -124,6 +127,18 @@ export function GameOver({
             label="Sector"
             value={`${level}`}
             color="#00f2ff"
+          />
+          <StatCard
+            label="Near Misses"
+            value={`${nearMisses}`}
+            color="#ff9900"
+            icon={<Crosshair size={14} className="text-[#ff9900]" />}
+          />
+          <StatCard
+            label="Power-Ups"
+            value={`${powerUpsCollected}`}
+            color="#cc44ff"
+            icon={<Star size={14} className="text-[#cc44ff]" />}
           />
         </div>
 
@@ -241,7 +256,7 @@ function StatCard({
 }) {
   return (
     <div
-      className="p-3 sm:p-4 rounded-2xl border flex flex-col items-center gap-1 transition-all"
+      className="p-3 sm:p-4 rounded-2xl border flex flex-col items-center gap-1 transition-all min-w-[100px] flex-1 max-w-[160px]"
       style={{
         background: highlight ? color + '18' : 'rgba(255,255,255,0.04)',
         borderColor: highlight ? color + '50' : 'rgba(255,255,255,0.08)',

@@ -29,16 +29,16 @@ export const BOT_SKILL_PER_LVL = 0.12; // 0–1 scale added per level
 
 // Bot attacker (offline escaper mode): drop interval in frames
 export const BOT_ATTACK_INTERVAL_BASE = 50;
-export const BOT_ATTACK_INTERVAL_MIN  = 8;
+export const BOT_ATTACK_INTERVAL_MIN  = 15;
 
 // ─── Online Match ─────────────────────────────────────────────────────────────
 export const MATCH_DURATION_SECONDS = 90;
 export const TEAM_SIZE = 2; // default; overridden at runtime by lobby selection
 
 // ─── Recall Asset ─────────────────────────────────────────────────────────────
-export const RECALL_SPAWN_CHANCE_EARLY = 0.72;
-export const RECALL_SPAWN_CHANCE_MID   = 0.42;
-export const RECALL_SPAWN_CHANCE_LATE  = 0.18;
+export const RECALL_SPAWN_CHANCE_EARLY = 1.0;   // guaranteed first elimination
+export const RECALL_SPAWN_CHANCE_MID   = 0.55;  // 55% mid-game
+export const RECALL_SPAWN_CHANCE_LATE  = 0.30;  // 30% late game
 export const RECALL_ASSET_SIZE = 26;
 
 // ─── Attacker Physical Body (online / local) ──────────────────────────────────
@@ -59,8 +59,8 @@ export const SCORE_NEAR_MISS           = 25;
 export const SCORE_OBSTACLE_CLEARED    = 40;
 export const SCORE_POWERUP_COIN        = 500;
 export const SCORE_ATTACKER_HIT_BOT    = 600;
-export const SCORE_ATTACKER_HIT_REAL   = 1200; // @planned — use for online attacker scoring
-export const SCORE_LEVEL_UP_BONUS      = 200;  // @planned — use in leveling logic
+export const SCORE_ATTACKER_HIT_REAL   = 1200; // awarded when attacker eliminates real player online
+export const SCORE_LEVEL_UP_BONUS      = 200;  // awarded on each level up
 export const COMBO_TIMEOUT_FRAMES      = 120;
 
 // ─── Power-Ups ────────────────────────────────────────────────────────────────
@@ -72,13 +72,13 @@ export const MAGNET_FORCE           = 0.055;
 export const SHIELD_BLOCK_HITS      = 1;
 
 // ─── Attacker ─────────────────────────────────────────────────────────────────
-export const ATTACKER_ENERGY_REGEN    = 0.12;  // per frame
+export const ATTACKER_ENERGY_REGEN    = 0.15;  // per frame
 export const ATTACKER_ENERGY_MAX      = 100;
 export const ATTACKER_DROP_COST       = 5;
 export const ABILITY_COST: Record<string, number> = {
-  SWARM:    22,
-  EMP:      40,
-  FIREWALL: 65,
+  SWARM:    18,
+  EMP:      30,
+  FIREWALL: 45,
 };
 export const ATTACKER_OFFLINE_DURATION_S = 60; // seconds for solo attacker
 
@@ -115,10 +115,10 @@ export const DASH_INVINCIBILITY      = 8;       // i-frames during dash
 export const DASH_TRAIL_MULTIPLIER   = 4;       // trail intensity during dash
 
 // ─── Bullet Time ──────────────────────────────────────────────────────────────
-export const BULLET_TIME_DURATION    = 45;      // frames of slow-mo
+export const BULLET_TIME_DURATION    = 60;      // frames of slow-mo (increased)
 export const BULLET_TIME_SPEED_MULT  = 0.2;     // world speed multiplier
-export const BULLET_TIME_THRESHOLD   = 3;       // near-misses needed to trigger
-export const BULLET_TIME_WINDOW      = 120;     // frames window for near-miss count
+export const BULLET_TIME_THRESHOLD   = 2;       // near-misses needed (lowered for easier activation)
+export const BULLET_TIME_WINDOW      = 90;      // frames window (tighter)
 
 // ─── Obstacle Enhancements ────────────────────────────────────────────────────
 export const OBSTACLE_MIN_ROTATION   = -0.04;   // rad/frame
@@ -127,5 +127,22 @@ export const OBSTACLE_GRAVITY_BASE   = 1.0;     // multiplier
 export const OBSTACLE_GRAVITY_VARIANCE = 0.4;   // ± variance
 
 // ─── Screen Edge Danger ───────────────────────────────────────────────────────
-export const SCREEN_EDGE_DANGER_ZONE = 50;      // px from edge // @planned — edge danger mechanic
-export const SCREEN_EDGE_PUSH_FORCE  = 0.15;    // force pushing away from edge // @planned — edge danger mechanic
+export const SCREEN_EDGE_DANGER_ZONE = 50;      // px from edge
+export const SCREEN_EDGE_PUSH_FORCE  = 0.15;    // force pushing away from edge
+
+// ─── Ghost Mode (Near-Miss Streak) ────────────────────────────────────────────
+export const GHOST_MODE_NEAR_MISS_COUNT = 3;    // near-misses needed in window
+export const GHOST_MODE_WINDOW_FRAMES  = 120;   // 2 seconds
+export const GHOST_MODE_DURATION       = 60;    // 1 second boost
+export const GHOST_MODE_ACCEL_MULT     = 1.2;   // speed multiplier
+
+// ─── Boost Power-Up ───────────────────────────────────────────────────────────
+export const BOOST_ACCEL_MULT  = 1.6;   // player accel multiplier during boost
+export const BOOST_MAXVX_MULT  = 1.5;   // max velocity multiplier during boost
+export const BOOST_INVINCIBILITY_FRAMES = 8;    // brief i-frames on activation
+
+// ─── Luck Mechanics ───────────────────────────────────────────────────────────
+export const LUCKY_COIN_CHANCE    = 0.08;  // 8% chance for rare coin
+export const CURSE_FAKE_CHANCE    = 0.05;  // 5% chance for fake power-up
+export const HOT_STREAK_DODGES    = 5;     // dodges without power-up for guaranteed spawn
+export const LUCKY_COIN_SCORE     = 2500;  // points for lucky coin

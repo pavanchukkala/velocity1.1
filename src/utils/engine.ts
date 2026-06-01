@@ -14,6 +14,7 @@ import {
   BOT_ATTACK_INTERVAL_BASE, BOT_ATTACK_INTERVAL_MIN,
   SCORE_PER_LEVEL, SCORE_SURVIVE_PER_FRAME, SCORE_NEAR_MISS,
   SCORE_OBSTACLE_CLEARED, SCORE_POWERUP_COIN, SCORE_ATTACKER_HIT_BOT,
+  SCORE_ATTACKER_HIT_REAL, SCORE_LEVEL_UP_BONUS,
   COMBO_TIMEOUT_FRAMES, POWERUP_SPAWN_INTERVAL, POWERUP_DURATION,
   MAGNET_ATTRACT_RADIUS, MAGNET_FORCE,
   ATTACKER_ENERGY_REGEN, ATTACKER_ENERGY_MAX, ATTACKER_DROP_COST, ABILITY_COST,
@@ -28,10 +29,18 @@ import {
   BULLET_TIME_THRESHOLD, BULLET_TIME_WINDOW,
   OBSTACLE_MIN_ROTATION, OBSTACLE_MAX_ROTATION,
   OBSTACLE_GRAVITY_BASE, OBSTACLE_GRAVITY_VARIANCE,
+  SCREEN_EDGE_DANGER_ZONE, SCREEN_EDGE_PUSH_FORCE,
   // Recall & attacker body
   RECALL_ASSET_SIZE, RECALL_SPAWN_CHANCE_EARLY, RECALL_SPAWN_CHANCE_MID, RECALL_SPAWN_CHANCE_LATE,
   ATTACKER_RADIUS, ATTACKER_ACCEL, ATTACKER_FRICTION, ATTACKER_MAX_VX,
   ATTACKER_BUMP_FORCE, ATTACKER_PUSH_THRESHOLD,
+  // Ghost mode
+  GHOST_MODE_NEAR_MISS_COUNT, GHOST_MODE_WINDOW_FRAMES,
+  GHOST_MODE_DURATION, GHOST_MODE_ACCEL_MULT,
+  // Boost power-up
+  BOOST_ACCEL_MULT, BOOST_MAXVX_MULT, BOOST_INVINCIBILITY_FRAMES,
+  // Luck mechanics
+  LUCKY_COIN_CHANCE, CURSE_FAKE_CHANCE, HOT_STREAK_DODGES, LUCKY_COIN_SCORE,
 } from '../constants';
 import type {
   GameState, Obstacle, PowerUp, PowerUpType, BotState,
@@ -109,6 +118,22 @@ export function makeInitialGameState(
     dashInvincibility: 0,
     bulletTimeActive: 0,
     recentNearMissTimestamps: [],
+    // Ghost mode
+    ghostModeTimer: 0,
+    // Boost invincibility
+    boostInvincTimer: 0,
+    // Luck tracking
+    dodgesSincePowerUp: 0,
+    // Near-miss total count (for stats)
+    totalNearMisses: 0,
+    // Power-ups collected count (for stats)
+    powerUpsCollected: 0,
+    // Level flash effect
+    levelFlashTimer: 0,
+    // Attacker kill streak
+    attackerKillStreak: 0,
+    // Edge danger shown flag
+    edgeDangerShown: false,
   };
 }
 
@@ -446,13 +471,16 @@ export function tick(
   if (newLevel > g.level) {
     g.level = newLevel;
     g.worldSpeed += LEVEL_SPEED_BONUS;
+    g.score += SCORE_LEVEL_UP_BONUS;
+    g.levelFlashTimer = 30;
     playSound('levelup');
-    floatText(g, canvasW / 2, canvasH / 2, `SECTOR ${g.level}`, '#ff0055', 28);
+    floatText(g, canvasW / 2, canvasH / 2, 'SECTOR ' + newLevel + ' — DANGER ESCALATED', '#ff0055', 28);
     cb.onLevelUpdate(g.level);
   }
 
   // ── Level-up flash timer ───────────────────────────────────────────────────
   if (g.levelUpFlash > 0) g.levelUpFlash--;
+  if (g.levelFlashTimer > 0) g.levelFlashTimer--;
 
   // ── Spawning (offline escaper mode) ───────────────────────────────────────
   if (role === 'ESCAPER' && mode === 'OFFLINE') {
@@ -485,21 +513,47 @@ export function tick(
       BOT_ATTACK_INTERVAL_BASE - g.level * 8
     );
     if (g.frameCount - g.botAttackFrame >= botAttackInterval) {
-      // Smart targeting: predict player position and aim slightly ahead
-      const predictX = g.playerX + g.playerVx * (canvasH / (g.worldSpeed * 2));
-      const spread = Math.max(20, 120 - g.level * 8); // tighter aim at higher levels
-      const aimX = predictX + (Math.random() - 0.5) * spread;
-      const clampedX = Math.max(30, Math.min(canvasW - 30, aimX));
-      g.obstacles.push(spawnObstacleAtX(clampedX));
       g.botAttackFrame = g.frameCount;
 
-      // At higher levels, drop flanking attacks too
-      if (g.level >= 4 && Math.random() < 0.35) {
-        const flankX = g.playerX + (Math.random() > 0.5 ? 1 : -1) * (80 + Math.random() * 100);
-        g.obstacles.push(spawnObstacleAtX(Math.max(30, Math.min(canvasW - 30, flankX))));
+      if (g.level <= 3) {
+        // Level 1-3: target random zone near player
+        const aimX = g.playerX + (Math.random() - 0.5) * 400;
+        const clampedX = Math.max(30, Math.min(canvasW - 30, aimX));
+        g.obstacles.push(spawnObstacleAtX(clampedX));
+      } else if (g.level <= 6) {
+        // Level 4-6: prediction with 25-30% chance to deliberately miss
+        const predictX = g.playerX + g.playerVx * (canvasH / (g.worldSpeed * 2));
+        const deliberateMiss = Math.random() < 0.28;
+        const offset = deliberateMiss ? (Math.random() > 0.5 ? 150 : -150) : 0;
+        const spread = Math.max(20, 120 - g.level * 8);
+        const aimX = predictX + offset + (Math.random() - 0.5) * spread;
+        const clampedX = Math.max(30, Math.min(canvasW - 30, aimX));
+        g.obstacles.push(spawnObstacleAtX(clampedX));
+
+        // Flanking attacks
+        if (Math.random() < 0.35) {
+          const flankX = g.playerX + (Math.random() > 0.5 ? 1 : -1) * (80 + Math.random() * 100);
+          g.obstacles.push(spawnObstacleAtX(Math.max(30, Math.min(canvasW - 30, flankX))));
+        }
+      } else {
+        // Level 7+: burst fire of 2, then pause
+        const predictX = g.playerX + g.playerVx * (canvasH / (g.worldSpeed * 2));
+        const spread = Math.max(20, 120 - g.level * 8);
+        for (let burst = 0; burst < 2; burst++) {
+          const aimX = predictX + (Math.random() - 0.5) * spread;
+          const clampedX = Math.max(30, Math.min(canvasW - 30, aimX));
+          g.obstacles.push(spawnObstacleAtX(clampedX));
+        }
+
+        // Flanking attacks at higher levels
+        if (Math.random() < 0.4) {
+          const flankX = g.playerX + (Math.random() > 0.5 ? 1 : -1) * (80 + Math.random() * 100);
+          g.obstacles.push(spawnObstacleAtX(Math.max(30, Math.min(canvasW - 30, flankX))));
+        }
       }
-      // Boss levels: carpet bomb
-      if (g.level >= 8 && Math.random() < 0.2) {
+
+      // Carpet bomb only at level 10+
+      if (g.level >= 10 && Math.random() < 0.2) {
         for (let i = 0; i < 4; i++) {
           const bx = 40 + Math.random() * (canvasW - 80);
           g.obstacles.push(spawnObstacleAtX(bx));
@@ -511,9 +565,28 @@ export function tick(
   }
 
   // ── Power-up spawning (escaper mode only) ─────────────────────────────────
-  if (role === 'ESCAPER' && g.frameCount - g.lastPowerUpFrame >= POWERUP_SPAWN_INTERVAL) {
-    g.powerUps.push(spawnPowerUp(canvasW));
+  let shouldSpawnPowerUp = role === 'ESCAPER' && g.frameCount - g.lastPowerUpFrame >= POWERUP_SPAWN_INTERVAL;
+  // Hot streak: force spawn if player dodged enough without getting a power-up
+  if (role === 'ESCAPER' && !shouldSpawnPowerUp && g.dodgesSincePowerUp >= HOT_STREAK_DODGES) {
+    shouldSpawnPowerUp = true;
+  }
+  if (shouldSpawnPowerUp) {
+    const pu = spawnPowerUp(canvasW);
+    // Lucky coin chance
+    if (Math.random() < LUCKY_COIN_CHANCE) {
+      pu.type = 'COIN';
+    }
+    // Curse fake power-up chance (looks like SHIELD but is SLOW)
+    else if (Math.random() < CURSE_FAKE_CHANCE) {
+      pu.type = 'SLOW';
+    }
+    g.powerUps.push(pu);
+    // Level 5+: spawn an extra power-up per interval
+    if (g.level >= 5) {
+      g.powerUps.push(spawnPowerUp(canvasW));
+    }
     g.lastPowerUpFrame = g.frameCount;
+    g.dodgesSincePowerUp = 0;
   }
 
   // ── Active power-up timers ─────────────────────────────────────────────────
@@ -535,8 +608,6 @@ export function tick(
     effectiveSpeed = 0;
   } else if (pt.slow > 0) {
     effectiveSpeed *= 0.38;
-  } else if (pt.boost > 0) {
-    effectiveSpeed *= 1.55;
   }
 
   // ── Dash timer decay ──────────────────────────────────────────────────────
@@ -558,7 +629,7 @@ export function tick(
     if (obs.vx && (obs.x < 0 || obs.x + obs.width > canvasW)) obs.vx *= -1;
 
     // ── Escaper collision ──────────────────────────────────────────────────
-    if (role === 'ESCAPER' && !g.isSpectating && pt.hide <= 0 && g.dashInvincibility <= 0) {
+    if (role === 'ESCAPER' && !g.isSpectating && pt.hide <= 0 && g.dashInvincibility <= 0 && g.boostInvincTimer <= 0) {
       const hit = circleRectHit(g.playerX, g.playerY, PLAYER_RADIUS, obs);
       if (hit) {
         if (pt.fire > 0) {
@@ -611,6 +682,7 @@ export function tick(
           sparks(g, g.playerX, g.playerY, '#00f2ff');
           // Track for bullet-time trigger
           g.recentNearMissTimestamps.push(g.frameCount);
+          g.totalNearMisses++;
           // Remove old timestamps outside window
           g.recentNearMissTimestamps = g.recentNearMissTimestamps.filter(
             t => g.frameCount - t < BULLET_TIME_WINDOW
@@ -622,6 +694,15 @@ export function tick(
             g.shake = 12;
             floatText(g, canvasW / 2, canvasH / 2 - 50, '⏱ BULLET TIME!', '#ff00ff', 28);
             playSound('boost_activate');
+          }
+          // Ghost mode: check near-misses within ghost window
+          const ghostRecentCount = g.recentNearMissTimestamps.filter(
+            t => g.frameCount - t < GHOST_MODE_WINDOW_FRAMES
+          ).length;
+          if (ghostRecentCount >= GHOST_MODE_NEAR_MISS_COUNT && g.ghostModeTimer <= 0) {
+            g.ghostModeTimer = GHOST_MODE_DURATION;
+            floatText(g, g.playerX, g.playerY - 50, 'GHOST RUN!', '#cc44ff', 28);
+            playSound('powerup');
           }
         }
       }
@@ -713,6 +794,7 @@ export function tick(
       g.obstacles.splice(i, 1);
       if (role === 'ESCAPER') {
         addScore(g, SCORE_OBSTACLE_CLEARED * g.multiplier, cb.onScoreUpdate);
+        g.dodgesSincePowerUp++;
       }
     }
   }
@@ -737,6 +819,8 @@ export function tick(
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < pu.size + PLAYER_RADIUS) {
         g.powerUps.splice(i, 1);
+        g.dodgesSincePowerUp = 0;
+        g.powerUpsCollected++;
         applyPowerUp(g, pu, canvasW, canvasH, cb);
         continue;
       }
@@ -895,11 +979,22 @@ function updateEscaperMovement(
   cb: TickCallbacks
 ) {
   const { keys, powerUpTimers: pt } = g;
-  const speedMod = pt.boost > 0 ? 1.4 : (pt.slow > 0 ? 0.6 : 1);
+  // BOOST: increase player speed, not world speed
+  let accelMult = 1;
+  let maxVxMult = 1;
+  if (pt.boost > 0) {
+    accelMult = BOOST_ACCEL_MULT;
+    maxVxMult = BOOST_MAXVX_MULT;
+  }
+  if (g.ghostModeTimer > 0) {
+    accelMult *= GHOST_MODE_ACCEL_MULT;
+    g.ghostModeTimer--;
+  }
+  const speedMod = pt.slow > 0 ? 0.6 : 1;
 
   // ── Horizontal movement ─────────────────────────────────────────────────
-  if (keys['ArrowLeft'] || keys['a'] || keys['A']) g.playerVx -= ACCEL * speedMod;
-  if (keys['ArrowRight'] || keys['d'] || keys['D']) g.playerVx += ACCEL * speedMod;
+  if (keys['ArrowLeft'] || keys['a'] || keys['A']) g.playerVx -= ACCEL * speedMod * accelMult;
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) g.playerVx += ACCEL * speedMod * accelMult;
 
   // ── Vertical movement (NEW — free 2D movement) ─────────────────────────
   if (keys['ArrowUp'] || keys['w'] || keys['W']) g.playerVy -= VERTICAL_ACCEL * speedMod;
@@ -944,7 +1039,7 @@ function updateEscaperMovement(
   if (g.touchX !== null) {
     const diffX = g.touchX - g.playerX;
     if (Math.abs(diffX) > 5) {
-      g.playerVx += Math.sign(diffX) * ACCEL * 1.2 * speedMod;
+      g.playerVx += Math.sign(diffX) * ACCEL * 1.2 * speedMod * accelMult;
     }
   }
   if (g.touchY !== null) {
@@ -959,8 +1054,8 @@ function updateEscaperMovement(
   g.playerVy *= (FRICTION + 0.04); // slightly less friction on Y for floaty feel
 
   // ── Speed clamp ─────────────────────────────────────────────────────────
-  if (Math.abs(g.playerVx) > MAX_VX * speedMod) {
-    g.playerVx = Math.sign(g.playerVx) * MAX_VX * speedMod;
+  if (Math.abs(g.playerVx) > MAX_VX * speedMod * maxVxMult) {
+    g.playerVx = Math.sign(g.playerVx) * MAX_VX * speedMod * maxVxMult;
   }
   if (Math.abs(g.playerVy) > MAX_VY * speedMod) {
     g.playerVy = Math.sign(g.playerVy) * MAX_VY * speedMod;
@@ -982,6 +1077,22 @@ function updateEscaperMovement(
   if (g.playerY > canvasH - PLAYER_RADIUS) {
     g.playerY = canvasH - PLAYER_RADIUS;
     g.playerVy = 0; // land on floor
+  }
+
+  // ── Screen edge danger push ──
+  if (g.playerX < SCREEN_EDGE_DANGER_ZONE) {
+    g.playerVx += SCREEN_EDGE_PUSH_FORCE;
+    if (!g.edgeDangerShown) {
+      floatText(g, g.playerX + 30, g.playerY - 30, 'EDGE DANGER', '#ff3333', 16);
+      g.edgeDangerShown = true;
+    }
+  }
+  if (g.playerX > canvasW - SCREEN_EDGE_DANGER_ZONE) {
+    g.playerVx -= SCREEN_EDGE_PUSH_FORCE;
+    if (!g.edgeDangerShown) {
+      floatText(g, g.playerX - 80, g.playerY - 30, 'EDGE DANGER', '#ff3333', 16);
+      g.edgeDangerShown = true;
+    }
   }
 
   // Emit position to server
@@ -1322,6 +1433,7 @@ function applyPowerUp(
       break;
     case 'BOOST':
       pt.boost = POWERUP_DURATION;
+      g.boostInvincTimer = BOOST_INVINCIBILITY_FRAMES;
       labelColor = '#ff00ff';
       displayLabel = '⚡ BOOST';
       playSound('boost_activate');

@@ -12,11 +12,12 @@ import {
   drawPowerUp, drawEscaper, drawBotEscaper, drawRemoteEscaper, drawRemoteAttacker,
   drawAttackerBody, drawRecallAsset,
   drawAttackerCursor, drawReticle, drawFloatingTexts, drawSpawnFlashes,
-  drawGlitch,
+  drawGlitch, drawEdgeDangerVignette, drawLevelFlash,
 } from '../../utils/renderer';
 import { HUD } from '../HUD/HUD';
 import { startAmbient } from '../../utils/audio';
-import { PLAYER_RADIUS } from '../../constants';
+import { PLAYER_RADIUS, SCREEN_EDGE_DANGER_ZONE } from '../../constants';
+import { getDeviceProfile } from '../../utils/responsive';
 
 interface Props {
   dimensions: { width: number; height: number };
@@ -57,6 +58,8 @@ export function GameCanvas({
   teamSizeRef.current = teamSize;
   const isHostRef   = useRef(isHost);
   isHostRef.current = isHost;
+  const roleRef     = useRef(role);
+  roleRef.current   = role;
 
   // Recall assets live here — mutated by socket events and engine pickup
   const recallAssetsRef = useRef<RecallAsset[]>([]);
@@ -99,8 +102,8 @@ export function GameCanvas({
     });
     const canvas = canvasRef.current;
     if (canvas) {
-      // DPI-aware: render at device pixel ratio for crisp visuals on Retina/HiDPI
-      const dpr = Math.min(window.devicePixelRatio || 1, 3); // cap at 3x for perf
+      // DPI-aware: render at device-profile-aware DPR for crisp visuals
+      const dpr = getDeviceProfile().renderDpr;
       canvas.width  = Math.round(dimensions.width * dpr);
       canvas.height = Math.round(dimensions.height * dpr);
       canvas.style.width  = dimensions.width + 'px';
@@ -259,6 +262,24 @@ export function GameCanvas({
         onGameOver: (r, s) => cbRef.current.onGameOver(r, s),
       });
 
+    // Attacker scoring: points awarded when a real player is eliminated
+    const onAttackerScored = ({ points }: { points: number }) => {
+      if (roleRef.current === 'ATTACKER') {
+        const g = gRef.current;
+        g.score += points;
+        g.attackerKillStreak = (g.attackerKillStreak || 0) + 1;
+        hudRef.current.score = g.score;
+        cbRef.current.onScoreUpdate(g.score);
+        // Kill streak feedback
+        const streak = g.attackerKillStreak;
+        const label = streak >= 3 ? 'CYBER MASSACRE!' : streak >= 2 ? 'DOUBLE BREACH!' : 'BREACH!';
+        const w = dimRef.current.width;
+        const h = dimRef.current.height;
+        g.floatingTexts.push({ id: 'kill-' + streak, x: w / 2, y: h * 0.3, text: label, life: 1, maxLife: 1, color: '#ff0055', size: 32 });
+        g.shake = Math.min(50, 25 + streak * 10);
+      }
+    };
+
     socket.on('player-moved',         onPlayerMoved);
     socket.on('attack-dropped',        onAttackDropped);
     socket.on('ability-used',          onAbilityUsed);
@@ -266,6 +287,7 @@ export function GameCanvas({
     socket.on('recall-asset-spawned',  onRecallAssetSpawned);
     socket.on('escaper-recalled',      onEscaperRecalled);
     socket.on('game-end',              onGameEnd);
+    socket.on('attacker-scored',       onAttackerScored);
 
     return () => {
       socket.off('player-moved',         onPlayerMoved);
@@ -275,6 +297,7 @@ export function GameCanvas({
       socket.off('recall-asset-spawned', onRecallAssetSpawned);
       socket.off('escaper-recalled',     onEscaperRecalled);
       socket.off('game-end',             onGameEnd);
+      socket.off('attacker-scored',      onAttackerScored);
     };
   }, [socket]);
 
@@ -482,6 +505,16 @@ export function GameCanvas({
 
       drawFloatingTexts(ctx, g.floatingTexts);
       drawGlitch(ctx, canvas, g.glitchTimer, w, h);
+
+      // Edge danger red vignette (escaper only)
+      if (role === 'ESCAPER' && !isSpectatingRef.current) {
+        drawEdgeDangerVignette(ctx, g.playerX, w, h, SCREEN_EDGE_DANGER_ZONE);
+      }
+
+      // Level-up flash overlay
+      if (g.levelFlashTimer > 0) {
+        drawLevelFlash(ctx, w, h, g.levelFlashTimer, 30);
+      }
 
       // Spectate indicator — subtle top bar, NO screen dimming
       // Player can fully watch teammates play

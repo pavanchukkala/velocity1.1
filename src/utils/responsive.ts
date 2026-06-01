@@ -56,14 +56,18 @@ function detectPerfTier(): 'low' | 'mid' | 'high' {
 }
 
 function getSafeAreaInsets(): { top: number; right: number; bottom: number; left: number } {
-  const style = getComputedStyle(document.documentElement);
-  const parse = (v: string) => parseInt(v, 10) || 0;
-  return {
-    top: parse(style.getPropertyValue('--sat') || style.getPropertyValue('env(safe-area-inset-top)')) || 0,
-    right: parse(style.getPropertyValue('--sar') || '0'),
-    bottom: parse(style.getPropertyValue('--sab') || '0'),
-    left: parse(style.getPropertyValue('--sal') || '0'),
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;top:0;left:0;padding-top:env(safe-area-inset-top,0px);padding-right:env(safe-area-inset-right,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);pointer-events:none;visibility:hidden;';
+  document.body.appendChild(el);
+  const cs = getComputedStyle(el);
+  const result = {
+    top: parseFloat(cs.paddingTop) || 0,
+    right: parseFloat(cs.paddingRight) || 0,
+    bottom: parseFloat(cs.paddingBottom) || 0,
+    left: parseFloat(cs.paddingLeft) || 0,
   };
+  document.body.removeChild(el);
+  return result;
 }
 
 export function detectDevice(): DeviceProfile {

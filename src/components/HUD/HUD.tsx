@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Shield, Flame, Eye, Timer, Magnet, Clock, Zap, Skull, Maximize2, Minimize2 } from 'lucide-react';
 import type { Role, RoomMode } from '../../types';
-import { ATTACKER_ENERGY_MAX } from '../../constants';
+import { ATTACKER_ENERGY_MAX, SCORE_PER_LEVEL } from '../../constants';
 
 interface HUDRef {
   score: number;
@@ -57,8 +57,11 @@ export function HUD({ hudRef, role, mode, teamSize, onTriggerAbility, isFullscre
   } = display;
 
   const energyPct = Math.min(100, (energy / ATTACKER_ENERGY_MAX) * 100);
+  const isEnergyFull = energyPct >= 100;
   const timerPct = role === 'ATTACKER' ? (timerSeconds / (mode === 'OFFLINE' ? 60 : 90)) * 100 : (timerSeconds / 90) * 100;
   const isTimerCritical = timerSeconds <= 15;
+  const isOfflineEscaper = mode === 'OFFLINE' && role === 'ESCAPER';
+  const levelProgressPct = isOfflineEscaper ? Math.min(100, ((score % SCORE_PER_LEVEL) / SCORE_PER_LEVEL) * 100) : 0;
 
   const POWERUP_DURATION_FRAMES = 300; // matches engine POWERUP_DURATION
   const TIME_STOP_DURATION_FRAMES = 180;
@@ -166,7 +169,7 @@ export function HUD({ hudRef, role, mode, teamSize, onTriggerAbility, isFullscre
                 <motion.div
                   key={p.key}
                   layout
-                  initial={{ opacity: 0, x: -20, scale: 0.85 }}
+                  initial={{ opacity: 0, x: -20, scale: 1.3 }}
                   animate={{ opacity: 1, x: 0, scale: 1 }}
                   exit={{ opacity: 0, x: -16, scale: 0.8 }}
                   transition={{ type: 'spring', stiffness: 340, damping: 26 }}
@@ -201,7 +204,7 @@ export function HUD({ hudRef, role, mode, teamSize, onTriggerAbility, isFullscre
                   </div>
 
                   {/* Countdown drain bar */}
-                  <div className="mx-2.5 mb-2 h-1.5 rounded-full overflow-hidden bg-white/8">
+                  <div className="mx-2.5 mb-2 h-2 rounded-full overflow-hidden bg-white/8">
                     <motion.div
                       className="h-full rounded-full"
                       animate={{ width: `${pct * 100}%` }}
@@ -225,31 +228,62 @@ export function HUD({ hudRef, role, mode, teamSize, onTriggerAbility, isFullscre
       {role === 'ATTACKER' && (
         <div className="absolute bottom-4 right-3 sm:right-4 flex flex-col items-end gap-2 sm:gap-3 pointer-events-auto">
 
-          {/* Timer */}
+          {/* Timer / Sector Display */}
           <div className="flex flex-col items-end gap-1">
-            <span className="text-[9px] uppercase tracking-[0.3em] font-bold"
-              style={{ color: isTimerCritical ? '#ff3333' : '#ff0055' }}>
-              Time Remaining
-            </span>
-            <div className="w-48 sm:w-60 h-2 bg-white/10 rounded-full overflow-hidden border border-white/10">
-              <motion.div
-                className="h-full rounded-full"
-                animate={{ width: `${Math.max(0, timerPct)}%` }}
-                transition={{ duration: 0.5 }}
-                style={{
-                  background: isTimerCritical
-                    ? 'linear-gradient(90deg,#ff3333,#ff6600)'
-                    : 'linear-gradient(90deg,#ffffff,#cccccc)',
-                  boxShadow: isTimerCritical ? '0 0 10px #ff333366' : '0 0 8px #ffffff44',
-                }}
-              />
-            </div>
-            <span
-              className="text-2xl font-black italic leading-none"
-              style={{ color: isTimerCritical ? '#ff3333' : '#fff' }}
-            >
-              {timerSeconds}s
-            </span>
+            {isOfflineEscaper ? (
+              /* Offline escaper: show sector progress instead of countdown */
+              <>
+                <span className="text-[9px] uppercase tracking-[0.3em] text-[#00f2ff] font-bold">
+                  Sector Progress
+                </span>
+                <div className="w-48 sm:w-60 h-2 bg-white/10 rounded-full overflow-hidden border border-white/10">
+                  <motion.div
+                    className="h-full rounded-full"
+                    animate={{ width: `${levelProgressPct}%` }}
+                    transition={{ duration: 0.3 }}
+                    style={{
+                      background: 'linear-gradient(90deg,#00f2ff,#00ff88)',
+                      boxShadow: '0 0 8px #00f2ff44',
+                    }}
+                  />
+                </div>
+                <span className="text-2xl font-black italic leading-none text-[#00f2ff]">
+                  SECTOR {level}
+                </span>
+              </>
+            ) : (
+              /* Online / attacker: show countdown timer */
+              <>
+                <span className="text-[9px] uppercase tracking-[0.3em] font-bold"
+                  style={{ color: isTimerCritical ? '#ff3333' : '#ff0055' }}>
+                  Time Remaining
+                </span>
+                <div className="w-48 sm:w-60 h-2 bg-white/10 rounded-full overflow-hidden border border-white/10">
+                  <motion.div
+                    className="h-full rounded-full"
+                    animate={{ width: `${Math.max(0, timerPct)}%` }}
+                    transition={{ duration: 0.5 }}
+                    style={{
+                      background: isTimerCritical
+                        ? 'linear-gradient(90deg,#ff3333,#ff6600)'
+                        : 'linear-gradient(90deg,#ffffff,#cccccc)',
+                      boxShadow: isTimerCritical ? '0 0 10px #ff333366' : '0 0 8px #ffffff44',
+                    }}
+                  />
+                </div>
+                <span
+                  className="text-2xl font-black italic leading-none"
+                  style={{ color: isTimerCritical ? '#ff3333' : '#fff' }}
+                >
+                  {timerSeconds}s
+                </span>
+                {mode === 'OFFLINE' && (
+                  <span className="text-[8px] uppercase tracking-[0.3em] text-[#ffcc00] font-black">
+                    CHALLENGE MODE
+                  </span>
+                )}
+              </>
+            )}
             {/* Format label */}
             {mode !== 'OFFLINE' && (
               <span className="text-[9px] uppercase tracking-widest text-white/30 text-center">
@@ -260,9 +294,16 @@ export function HUD({ hudRef, role, mode, teamSize, onTriggerAbility, isFullscre
 
           {/* Energy bar */}
           <div className="flex flex-col items-end gap-1">
-            <span className="text-[9px] uppercase tracking-[0.3em] text-[#ff0055] font-bold">
+            <motion.span
+              className="text-[9px] uppercase tracking-[0.3em] font-bold"
+              animate={isEnergyFull
+                ? { color: ['#ff0055', '#ffcc00', '#ff0055'], textShadow: ['0 0 4px #ffcc0000', '0 0 10px #ffcc0088', '0 0 4px #ffcc0000'] }
+                : { color: '#ff0055', textShadow: '0 0 0px transparent' }
+              }
+              transition={isEnergyFull ? { repeat: Infinity, duration: 1.2 } : {}}
+            >
               Attack Energy
-            </span>
+            </motion.span>
             <div className="w-48 sm:w-60 h-3 bg-white/8 rounded-full overflow-hidden border border-white/10">
               <motion.div
                 className="h-full energy-bar rounded-full"
