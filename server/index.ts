@@ -102,9 +102,133 @@ function endRoom(io: Server, room: ServerRoom, result: WinResult) {
   if (room.gamePhase === 'GAMEOVER') return;
   room.gamePhase = 'GAMEOVER';
   if (room.gameTimer) clearInterval(room.gameTimer);
+  // Stop server-side collision tick
+  const ct = roomCollisionTimers.get(room.id);
+  if (ct) { clearInterval(ct); roomCollisionTimers.delete(room.id); }
+  // Clear tracked obstacles
+  roomObstacles.delete(room.id);
   const scores: Record<string, number> = {};
   room.scores.forEach((v, k) => { scores[k] = v; });
   io.to(room.id).emit('game-end', { result, scores });
+}
+
+// ── Server-side collision detection ───────────────────────────────────────────
+// Ensures hits register even when escaper's browser tab is inactive/throttled.
+// All coordinates are normalized 0-1.
+
+interface ServerObstacle {
+  id: string;
+  x: number;      // normalized left edge (0-1)
+  y: number;      // normalized top edge (0-1)
+  w: number;      // normalized width
+  h: number;      // normalized height
+  vy: number;     // normalized fall speed per second
+  vx: number;     // normalized horizontal speed per second
+  spawnedBy: string; // attacker who dropped it
+}
+
+const roomObstacles = new Map<string, ServerObstacle[]>();
+const roomCollisionTimers = new Map<string, ReturnType<typeof setInterval>>();
+
+const ESCAPER_RADIUS_N = 0.018; // ~14px radius on 800px screen, normalized
+const OBS_FALL_SPEED_N = 0.0035; // normalized fall speed per 200ms tick (~3.5px/200ms at 1000px)
+
+function serverCircleRectHit(
+  cx: number, cy: number, r: number,
+  rx: number, ry: number, rw: number, rh: number,
+): boolean {
+  const nearX = Math.max(rx, Math.min(cx, rx + rw));
+  const nearY = Math.max(ry, Math.min(cy, ry + rh));
+  const dx = cx - nearX;
+  const dy = cy - nearY;
+  return (dx * dx + dy * dy) <= (r * r);
+}
+
+function serverEliminateEscaper(io: Server, room: ServerRoom, escaperId: string) {
+  const p = room.players.get(escaperId);
+  if (!p || p.role !== 'ESCAPER' || p.isDefeated) return; // already dead or not escaper
+
+  p.isDefeated = true;
+  p.isSpectating = true;
+  room.eliminatedEscapers.add(escaperId);
+
+  // Recall asset — only in team modes
+  if (room.teamSize > 1) {
+    spawnRecallAsset(io, room, escaperId);
+  }
+
+  const active = getActiveEscapers(room);
+  io.to(room.id).emit('escaper-eliminated', { escaperId, remaining: active.length });
+
+  // Award attacker score
+  for (const [pid, pl] of room.players) {
+    if (pl.role === 'ATTACKER' && !pl.isBot) {
+      io.to(pid).emit('attacker-scored', { points: 1200 });
+    }
+  }
+
+  // Notify the eliminated escaper's client to enter spectate
+  io.to(escaperId).emit('force-spectate', { escaperId });
+
+  if (active.length === 0) {
+    endRoom(io, room, 'ATTACKERS_WIN');
+  }
+}
+
+function startCollisionTick(io: Server, room: ServerRoom) {
+  // Run every 200ms — fast enough to catch hits, light enough to not overload
+  const timer = setInterval(() => {
+    if (room.gamePhase !== 'PLAYING') {
+      clearInterval(timer);
+      roomCollisionTimers.delete(room.id);
+      return;
+    }
+
+    const obstacles = roomObstacles.get(room.id);
+    if (!obstacles || obstacles.length === 0) return;
+
+    // Get all active (alive, not hidden, not shielded) escapers
+    const escapers = [...room.players.values()].filter(
+      p => p.role === 'ESCAPER' && !p.isDefeated && !p.isSpectating && !p.isHidden
+    );
+
+    // Advance each obstacle
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      const obs = obstacles[i];
+      obs.y += obs.vy;
+      obs.x += obs.vx;
+      // Bounce off walls
+      if (obs.vx && (obs.x < 0 || obs.x + obs.w > 1)) obs.vx *= -1;
+
+      // Remove if off-screen
+      if (obs.y > 1.2) {
+        obstacles.splice(i, 1);
+        continue;
+      }
+
+      // Check collision with each escaper
+      for (const esc of escapers) {
+        if (esc.isDefeated || esc.isSpectating) continue;
+        if (esc.isShielded) {
+          // Shield absorbs — break shield, remove obstacle
+          if (serverCircleRectHit(esc.x, esc.y, ESCAPER_RADIUS_N, obs.x, obs.y, obs.w, obs.h)) {
+            esc.isShielded = false;
+            obstacles.splice(i, 1);
+            break;
+          }
+          continue;
+        }
+        if (serverCircleRectHit(esc.x, esc.y, ESCAPER_RADIUS_N, obs.x, obs.y, obs.w, obs.h)) {
+          // HIT — eliminate this escaper server-authoritatively
+          serverEliminateEscaper(io, room, esc.id);
+          obstacles.splice(i, 1);
+          break; // obstacle consumed
+        }
+      }
+    }
+  }, 200);
+
+  roomCollisionTimers.set(room.id, timer);
 }
 
 // Pure luck — no formulas, no patterns, no guarantees.
@@ -453,6 +577,9 @@ async function main() {
       room.gamePhase = 'PLAYING';
       room.startTime = Date.now();
 
+      // Initialize obstacle tracking for this room
+      roomObstacles.set(roomId, []);
+
       // Start server-side game timer (online/local only)
       if (room.mode !== 'OFFLINE') {
         room.gameTimer = setInterval(() => {
@@ -475,6 +602,9 @@ async function main() {
             endRoom(io, room, active.length >= 1 ? 'ESCAPERS_WIN' : 'ATTACKERS_WIN');
           }
         }, 1000);
+
+        // Start server-side collision detection tick
+        startCollisionTick(io, room);
       }
 
       io.to(roomId).emit('game-start', { roomId, seed: room.seed });
@@ -596,6 +726,19 @@ async function main() {
         spawnedBy: socket.id,
       };
       io.to(roomId).emit('attack-dropped', { obstacle: obs });
+
+      // Track obstacle server-side for collision detection
+      const tracked = roomObstacles.get(roomId);
+      if (tracked) {
+        tracked.push({
+          id: obs.id, x: obs.x, y: obs.y,
+          w: obs.width, h: obs.height,
+          vy: OBS_FALL_SPEED_N, vx: 0,
+          spawnedBy: socket.id,
+        });
+        // Cap tracked obstacles to prevent memory leak
+        if (tracked.length > 80) tracked.splice(0, tracked.length - 80);
+      }
     });
 
     // ── Bot drops obstacle (handled by host client) ─────────────────────────
@@ -629,6 +772,18 @@ async function main() {
         spawnedBy: bot.id,
       };
       io.to(roomId).emit('attack-dropped', { obstacle: obs });
+
+      // Track bot obstacles server-side for collision detection
+      const tracked = roomObstacles.get(roomId);
+      if (tracked) {
+        tracked.push({
+          id: obs.id, x: obs.x, y: obs.y,
+          w: obs.width, h: obs.height,
+          vy: OBS_FALL_SPEED_N, vx: 0,
+          spawnedBy: bot.id,
+        });
+        if (tracked.length > 80) tracked.splice(0, tracked.length - 80);
+      }
     });
 
     // ── Attacker uses ability ───────────────────────────────────────────────
@@ -815,6 +970,10 @@ async function main() {
       const isAbandoned = room.startTime > 0 && (now - room.startTime > 600_000);
       if (isStale || isEmpty || isAbandoned) {
         if (room.gameTimer) clearInterval(room.gameTimer);
+        // Clean up collision detection
+        const ct = roomCollisionTimers.get(id);
+        if (ct) { clearInterval(ct); roomCollisionTimers.delete(id); }
+        roomObstacles.delete(id);
         rooms.delete(id);
         console.log(`[GC] Cleaned up room ${id}`);
       }
@@ -837,6 +996,10 @@ function handleLeave(io: Server, socket: Socket, roomId: string) {
 
   if (room.players.size === 0) {
     if (room.gameTimer) clearInterval(room.gameTimer);
+    // Clean up collision detection
+    const ct = roomCollisionTimers.get(roomId);
+    if (ct) { clearInterval(ct); roomCollisionTimers.delete(roomId); }
+    roomObstacles.delete(roomId);
     rooms.delete(roomId);
   } else {
     broadcastRoomUpdate(io, room);

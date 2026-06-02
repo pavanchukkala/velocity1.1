@@ -279,6 +279,20 @@ export function GameCanvas({
         g.shake = Math.min(50, 25 + streak * 10);
       }
     };
+    // Server-authoritative elimination — handles hits when escaper's tab is
+    // inactive (rAF paused). The server runs its own collision tick and sends
+    // this event when it detects a hit the client missed.
+    const onForceSpectate = ({ escaperId }: { escaperId: string }) => {
+      if (escaperId === socketRef.current?.id && roleRef.current === 'ESCAPER') {
+        const g = gRef.current;
+        if (!g.isSpectating && !g.isGameOver) {
+          g.isSpectating = true;
+          isSpectatingRef.current = true;
+          g.shake = 35;
+          g.glitchTimer = 30;
+        }
+      }
+    };
 
     socket.on('player-moved',         onPlayerMoved);
     socket.on('attack-dropped',        onAttackDropped);
@@ -288,6 +302,7 @@ export function GameCanvas({
     socket.on('escaper-recalled',      onEscaperRecalled);
     socket.on('game-end',              onGameEnd);
     socket.on('attacker-scored',       onAttackerScored);
+    socket.on('force-spectate',        onForceSpectate);
 
     return () => {
       socket.off('player-moved',         onPlayerMoved);
@@ -298,6 +313,7 @@ export function GameCanvas({
       socket.off('escaper-recalled',     onEscaperRecalled);
       socket.off('game-end',             onGameEnd);
       socket.off('attacker-scored',      onAttackerScored);
+      socket.off('force-spectate',       onForceSpectate);
     };
   }, [socket]);
 
