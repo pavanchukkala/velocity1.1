@@ -105,6 +105,8 @@ function endRoom(io: Server, room: ServerRoom, result: WinResult) {
   // Stop server-side collision tick
   const ct = roomCollisionTimers.get(room.id);
   if (ct) { clearInterval(ct); roomCollisionTimers.delete(room.id); }
+  // Stop state sync timer
+  if ((room as any)._syncTimer) { clearInterval((room as any)._syncTimer); (room as any)._syncTimer = null; }
   // Clear tracked obstacles
   roomObstacles.delete(room.id);
   const scores: Record<string, number> = {};
@@ -130,8 +132,12 @@ interface ServerObstacle {
 const roomObstacles = new Map<string, ServerObstacle[]>();
 const roomCollisionTimers = new Map<string, ReturnType<typeof setInterval>>();
 
-const ESCAPER_RADIUS_N = 0.018; // ~14px radius on 800px screen, normalized
-const OBS_FALL_SPEED_N = 0.0035; // normalized fall speed per 200ms tick (~3.5px/200ms at 1000px)
+// Server collision constants — calibrated to match client physics.
+// Client: INITIAL_SPEED=12 px/frame at 60fps on VIRTUAL_H=1000
+// Normalized per frame: 12/1000 = 0.012, per second: 0.72
+// Server ticks every 50ms (20Hz), so per tick: 0.72 * 0.05 = 0.036
+const ESCAPER_RADIUS_N = 0.0225; // PLAYER_RADIUS(18) / VIRTUAL_W(800)
+const OBS_FALL_SPEED_N = 0.036;  // matches ~12px/frame at 60fps on 1000px canvas
 
 function serverCircleRectHit(
   cx: number, cy: number, r: number,
@@ -176,7 +182,8 @@ function serverEliminateEscaper(io: Server, room: ServerRoom, escaperId: string)
 }
 
 function startCollisionTick(io: Server, room: ServerRoom) {
-  // Run every 200ms — fast enough to catch hits, light enough to not overload
+  // Run every 50ms (20Hz) — matches game physics closely, prevents tunneling
+  const TICK_MS = 50;
   const timer = setInterval(() => {
     if (room.gamePhase !== 'PLAYING') {
       clearInterval(timer);
@@ -187,46 +194,57 @@ function startCollisionTick(io: Server, room: ServerRoom) {
     const obstacles = roomObstacles.get(room.id);
     if (!obstacles || obstacles.length === 0) return;
 
-    // Get all active (alive, not hidden, not shielded) escapers
+    // Get all active (alive, not hidden) escapers
     const escapers = [...room.players.values()].filter(
       p => p.role === 'ESCAPER' && !p.isDefeated && !p.isSpectating && !p.isHidden
     );
 
-    // Advance each obstacle
+    // Advance each obstacle and check collisions
     for (let i = obstacles.length - 1; i >= 0; i--) {
       const obs = obstacles[i];
+      const prevY = obs.y;
       obs.y += obs.vy;
       obs.x += obs.vx;
       // Bounce off walls
       if (obs.vx && (obs.x < 0 || obs.x + obs.w > 1)) obs.vx *= -1;
 
       // Remove if off-screen
-      if (obs.y > 1.2) {
+      if (obs.y > 1.3) {
         obstacles.splice(i, 1);
         continue;
       }
 
-      // Check collision with each escaper
+      // Swept collision: check both current position AND the path between
+      // previous and current position to prevent fast obstacles tunneling
+      // through escapers between ticks
+      let consumed = false;
       for (const esc of escapers) {
         if (esc.isDefeated || esc.isSpectating) continue;
-        if (esc.isShielded) {
-          // Shield absorbs — break shield, remove obstacle
-          if (serverCircleRectHit(esc.x, esc.y, ESCAPER_RADIUS_N, obs.x, obs.y, obs.w, obs.h)) {
+
+        // Check collision at current position
+        const hit = serverCircleRectHit(esc.x, esc.y, ESCAPER_RADIUS_N, obs.x, obs.y, obs.w, obs.h);
+        // Also check at midpoint to catch fast-moving obstacles
+        const midY = (prevY + obs.y) / 2;
+        const hitMid = !hit && serverCircleRectHit(esc.x, esc.y, ESCAPER_RADIUS_N, obs.x, midY, obs.w, obs.h);
+
+        if (hit || hitMid) {
+          if (esc.isShielded) {
+            // Shield absorbs — break shield, remove obstacle
             esc.isShielded = false;
-            obstacles.splice(i, 1);
+            consumed = true;
             break;
           }
-          continue;
-        }
-        if (serverCircleRectHit(esc.x, esc.y, ESCAPER_RADIUS_N, obs.x, obs.y, obs.w, obs.h)) {
           // HIT — eliminate this escaper server-authoritatively
           serverEliminateEscaper(io, room, esc.id);
-          obstacles.splice(i, 1);
-          break; // obstacle consumed
+          consumed = true;
+          break;
         }
       }
+      if (consumed) {
+        obstacles.splice(i, 1);
+      }
     }
-  }, 200);
+  }, TICK_MS);
 
   roomCollisionTimers.set(room.id, timer);
 }
@@ -605,6 +623,33 @@ async function main() {
 
         // Start server-side collision detection tick
         startCollisionTick(io, room);
+
+        // Authoritative state sync — every 500ms, broadcast ALL player
+        // positions to ALL clients. This ensures every device converges
+        // to the same game state regardless of screen size, refresh rate,
+        // or tab focus. Clients should reconcile their local positions with
+        // these authoritative snapshots.
+        const syncTimer = setInterval(() => {
+          if (room.gamePhase !== 'PLAYING') {
+            clearInterval(syncTimer);
+            return;
+          }
+          const snapshot: Array<{
+            id: string; x: number; y: number; vx: number;
+            isDefeated: boolean; isSpectating: boolean;
+            isShielded: boolean; isFiring: boolean; isHidden: boolean;
+          }> = [];
+          for (const [id, pl] of room.players) {
+            snapshot.push({
+              id, x: pl.x, y: pl.y, vx: pl.vx,
+              isDefeated: pl.isDefeated, isSpectating: pl.isSpectating,
+              isShielded: pl.isShielded, isFiring: pl.isFiring, isHidden: pl.isHidden,
+            });
+          }
+          io.to(room.id).emit('state-sync', { players: snapshot });
+        }, 500);
+        // Store sync timer for cleanup (use room object to track)
+        (room as any)._syncTimer = syncTimer;
       }
 
       io.to(roomId).emit('game-start', { roomId, seed: room.seed });
@@ -808,44 +853,23 @@ async function main() {
       io.to(roomId).emit('ability-used', { ability, fromId: socket.id });
     });
 
-    // ── Escaper eliminated ──────────────────────────────────────────────────
+    // ── Escaper eliminated (client-reported) ──────────────────────────────
+    // Client detected a collision and reports it. Server validates and processes
+    // through the shared serverEliminateEscaper to prevent duplication.
     socket.on('game-over-report', (data: { roomId: string; escaperId: string }) => {
       if (!checkRateLimit(socket.id, 'game-over-report', 5)) return;
       const roomId = validateRoomId(data?.roomId);
       if (!roomId) return;
       const room = rooms.get(roomId);
       if (!room || room.gamePhase !== 'PLAYING') return;
-      if (playerRoom.get(socket.id) !== roomId) return; // Not in this room
+      if (playerRoom.get(socket.id) !== roomId) return;
 
       const escaperId = typeof data?.escaperId === 'string' ? data.escaperId : null;
       if (!escaperId) return;
 
-      const p = room.players.get(escaperId);
-      if (p && p.role === 'ESCAPER' && !p.isDefeated) {
-        p.isDefeated = true;
-        p.isSpectating = true; // enter spectate — watch only, not counted for win
-        room.eliminatedEscapers.add(escaperId);
-
-        // Recall asset — spawn only when team has teammates to pick it up (not 1v1)
-        if (room.teamSize > 1) {
-          spawnRecallAsset(io, room, escaperId);
-        }
-
-        const active = getActiveEscapers(room);
-        io.to(roomId).emit('escaper-eliminated', { escaperId, remaining: active.length });
-
-        // Award attacker score — find which attacker(s) are in the room
-        for (const [pid, pl] of room.players) {
-          if (pl.role === 'ATTACKER' && !pl.isBot) {
-            io.to(pid).emit('attacker-scored', { points: 1200 });
-          }
-        }
-
-        // Attackers win only when ZERO active escapers remain
-        if (active.length === 0) {
-          endRoom(io, room, 'ATTACKERS_WIN');
-        }
-      }
+      // Use shared elimination function — handles dedup (isDefeated check),
+      // recall spawning, scoring, and win condition in one place
+      serverEliminateEscaper(io, room, escaperId);
     });
 
     socket.on('recall-teammate', (data: { roomId: string; recallTargetId: string }) => {

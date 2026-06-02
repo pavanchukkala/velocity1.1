@@ -294,6 +294,51 @@ export function GameCanvas({
       }
     };
 
+    // Server-authoritative state sync — every 500ms server broadcasts ALL
+    // positions. Reconcile remote players and handle server-detected eliminations.
+    const onStateSync = ({ players }: { players: Array<{
+      id: string; x: number; y: number; vx: number;
+      isDefeated: boolean; isSpectating: boolean;
+      isShielded: boolean; isFiring: boolean; isHidden: boolean;
+    }> }) => {
+      const g = gRef.current;
+      const w = dimRef.current.width;
+      const h = dimRef.current.height;
+      const myId = socketRef.current?.id;
+
+      for (const sp of players) {
+        if (sp.id === myId) {
+          // Reconcile local player state — server says we're eliminated
+          if (sp.isDefeated && !g.isSpectating && !g.isGameOver && roleRef.current === 'ESCAPER') {
+            g.isSpectating = true;
+            isSpectatingRef.current = true;
+            g.shake = 35;
+            g.glitchTimer = 30;
+          }
+          continue; // don't override local movement prediction
+        }
+        // Remote players — snap to server-authoritative positions
+        const rp = g.remotePlayers.find(r => r.id === sp.id);
+        if (rp) {
+          rp.x = sp.x * w;
+          rp.y = sp.y * h;
+          rp.vx = sp.vx * w / 800;
+          rp.isShielded = sp.isShielded;
+          rp.isFiring = sp.isFiring;
+          rp.isHidden = sp.isHidden;
+          // Mark eliminated players
+          if (sp.isDefeated && !rp.isDefeated) {
+            rp.isDefeated = true;
+            rp.isSpectating = true;
+          } else if (!sp.isDefeated && rp.isDefeated) {
+            // Recalled by server
+            rp.isDefeated = false;
+            rp.isSpectating = false;
+          }
+        }
+      }
+    };
+
     socket.on('player-moved',         onPlayerMoved);
     socket.on('attack-dropped',        onAttackDropped);
     socket.on('ability-used',          onAbilityUsed);
@@ -303,6 +348,7 @@ export function GameCanvas({
     socket.on('game-end',              onGameEnd);
     socket.on('attacker-scored',       onAttackerScored);
     socket.on('force-spectate',        onForceSpectate);
+    socket.on('state-sync',            onStateSync);
 
     return () => {
       socket.off('player-moved',         onPlayerMoved);
@@ -314,6 +360,7 @@ export function GameCanvas({
       socket.off('game-end',             onGameEnd);
       socket.off('attacker-scored',      onAttackerScored);
       socket.off('force-spectate',       onForceSpectate);
+      socket.off('state-sync',           onStateSync);
     };
   }, [socket]);
 
